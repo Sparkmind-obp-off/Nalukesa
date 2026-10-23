@@ -8,12 +8,22 @@ interface Conn {
   status: string; readiness: string; server_name: string | null; server_version: string | null; protocol_version: string | null
   last_check_at: string | null; last_verified_at: string | null; tools_refreshed_at: string | null; last_error: string | null
   tools_total?: number; tools_allowed?: number
+  oauth_mode?: 'auto' | 'preregistered'; oauth_client_id?: string | null; oauth_token_auth_method?: string | null; oauth_scopes?: string | null
+  has_client_secret?: boolean; oauth_strategy?: string | null; oauth_authorized_at?: string | null; oauth_token_expires_at?: string | null; oauth_last_refresh_at?: string | null
+  oauth_diagnostics?: Diag | null
+  stages?: Record<string, string>
+}
+interface Diag {
+  stage_reached?: string; message?: string; next_action?: string | null; selected?: string | null
+  resource_metadata?: { found: boolean; source: string | null; resource: string | null; authorization_servers: string[]; scopes_supported: string[] }
+  authorization_server?: { found: boolean; issuer: string | null; discovery: string | null; pkce_s256: boolean | null; dcr: boolean; cimd: boolean; token_endpoint_auth_methods: string[] }
+  strategies?: { preregistered: boolean; cimd: boolean; dcr: boolean }
 }
 interface Tool {
   name: string; title: string | null; description: string | null; input_schema: Record<string, unknown>; annotations: Record<string, unknown> | null
   risk: 'read' | 'write' | 'destructive'; permission: 'allowed' | 'denied'; present: boolean; changed_at: string | null; last_success_at: string | null; last_error_at: string | null
 }
-interface Meta { encryption_configured: boolean; local_mock_allowed: boolean; auth_types: { id: string; label: string; supported: boolean; note?: string }[] }
+interface Meta { encryption_configured: boolean; local_mock_allowed: boolean; auth_types: { id: string; label: string; supported: boolean; note?: string }[]; oauth?: { redirect_uri: string; client_id_metadata_document: string | null } }
 
 const READINESS: Record<string, string> = {
   disabled: 'Disabled', not_configured: 'Not configured', auth_required: 'Authentication required', untested: 'Not tested',
@@ -35,6 +45,11 @@ function ConnectionForm({ initial, meta, onDone, onCancel }: { initial?: Conn; m
   const [url, setUrl] = useState(initial?.endpoint_url ?? '')
   const [auth, setAuth] = useState<Conn['auth_type']>(initial?.auth_type ?? 'bearer')
   const [token, setToken] = useState('')
+  const [oauthMode, setOauthMode] = useState<'auto' | 'preregistered'>(initial?.oauth_mode ?? 'auto')
+  const [clientId, setClientId] = useState(initial?.oauth_client_id ?? '')
+  const [clientSecret, setClientSecret] = useState('')
+  const [tokenAuth, setTokenAuth] = useState(initial?.oauth_token_auth_method ?? 'none')
+  const [scopes, setScopes] = useState(initial?.oauth_scopes ?? '')
   const [timeout, setTimeoutMs] = useState(initial?.timeout_ms ?? 15000)
   const [maxBytes, setMaxBytes] = useState(initial?.max_response_bytes ?? 1048576)
   const [rate, setRate] = useState(initial?.calls_per_minute ?? 30)
@@ -47,6 +62,15 @@ function ConnectionForm({ initial, meta, onDone, onCancel }: { initial?: Conn; m
     setErrs({})
     const body: Record<string, unknown> = { name, endpoint_url: url, auth_type: auth, timeout_ms: timeout, max_response_bytes: maxBytes, calls_per_minute: rate }
     if (auth === 'bearer' && token) body.bearer_token = token
+    if (auth === 'oauth') {
+      body.oauth_mode = oauthMode
+      body.oauth_scopes = scopes.trim() || null
+      if (oauthMode === 'preregistered') {
+        body.oauth_client_id = clientId.trim()
+        body.oauth_token_auth_method = tokenAuth
+        if (clientSecret) body.oauth_client_secret = clientSecret
+      }
+    }
     try {
       const r = initial
         ? await api<Conn>(`/connector/connections/${initial.id}`, { method: 'PATCH', json: body })
@@ -97,7 +121,55 @@ function ConnectionForm({ initial, meta, onDone, onCancel }: { initial?: Conn; m
             {errs.bearer_token && <span className="err">{errs.bearer_token}</span>}
           </div>
         )}
-        {auth === 'oauth' && <p className="notice info full" style={{ gridColumn: '1 / -1' }}>After saving, press <strong>Authorize</strong>. The provider must support OAuth discovery (RFC 9728/8414) and dynamic client registration (RFC 7591).</p>}
+        {auth === 'oauth' && (
+          <fieldset className="full" style={{ gridColumn: '1 / -1', border: '1px solid var(--line)', borderRadius: 12, padding: 14, margin: 0 }}>
+            <legend className="small" style={{ padding: '0 6px' }}>OAuth 2.1 (authorization code + PKCE S256)</legend>
+            <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '6px 0' }}>
+              <input type="radio" name="oauth-mode" checked={oauthMode === 'auto'} onChange={() => setOauthMode('auto')} />
+              <span><strong>Recommended: Sign in with OAuth</strong><span className="muted small" style={{ display: 'block' }}>NALUKESA discovers the provider’s OAuth metadata and registers itself automatically, using a Client ID Metadata Document or Dynamic Client Registration, whichever the provider supports.</span></span>
+            </label>
+            <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '6px 0' }}>
+              <input type="radio" name="oauth-mode" checked={oauthMode === 'preregistered'} onChange={() => setOauthMode('preregistered')} />
+              <span><strong>Use a pre-registered OAuth app</strong><span className="muted small" style={{ display: 'block' }}>For providers that require you to create an OAuth app in their developer console.</span></span>
+            </label>
+            {meta.oauth && (
+              <p className="small muted" style={{ margin: '8px 0' }}>
+                Callback URL to register with the provider: <code className="mono">{meta.oauth.redirect_uri}</code>
+                {meta.oauth.client_id_metadata_document && <> · Client metadata document: <code className="mono">{meta.oauth.client_id_metadata_document}</code></>}
+              </p>
+            )}
+            {oauthMode === 'preregistered' && (
+              <div className="form" style={{ marginTop: 8 }}>
+                <div className="field">
+                  <label htmlFor="c-oauth_client_id">Client ID</label>
+                  <input id="c-oauth_client_id" className="input" autoComplete="off" required value={clientId} onChange={(e) => setClientId(e.target.value)} />
+                  {errs.oauth_client_id && <span className="err">{errs.oauth_client_id}</span>}
+                </div>
+                <div className="field">
+                  <label htmlFor="c-oauth_token_auth_method">Client type / token auth</label>
+                  <select id="c-oauth_token_auth_method" className="select" value={tokenAuth} onChange={(e) => setTokenAuth(e.target.value)}>
+                    <option value="none">Public client (no secret)</option>
+                    <option value="client_secret_basic">Confidential: client_secret_basic</option>
+                    <option value="client_secret_post">Confidential: client_secret_post</option>
+                  </select>
+                </div>
+                {tokenAuth !== 'none' && (
+                  <div className="field full">
+                    <label htmlFor="c-oauth_client_secret">Client secret {initial?.has_client_secret && <span className="muted">(stored; leave blank to keep)</span>}</label>
+                    <input id="c-oauth_client_secret" className="input" type="password" autoComplete="off" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} required={!initial?.has_client_secret} />
+                    <span className="help">Encrypted server-side and never shown again. Enter it here only. Never paste it into chat.</span>
+                    {errs.oauth_client_secret && <span className="err">{errs.oauth_client_secret}</span>}
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="field" style={{ marginTop: 8 }}>
+              <label htmlFor="c-oauth_scopes">Scopes (optional override)</label>
+              <input id="c-oauth_scopes" className="input" value={scopes} onChange={(e) => setScopes(e.target.value)} placeholder="Leave blank to use the scopes the provider advertises" />
+              {errs.oauth_scopes && <span className="err">{errs.oauth_scopes}</span>}
+            </div>
+          </fieldset>
+        )}
         <F id="timeout_ms" label="Timeout (ms)" help="1000–30000"><input id="c-timeout_ms" className="input" type="number" min={1000} max={30000} value={timeout} onChange={(e) => setTimeoutMs(Number(e.target.value))} /></F>
         <F id="max_response_bytes" label="Max response (bytes)" help="1 KB – 4 MB"><input id="c-max_response_bytes" className="input" type="number" min={1024} max={4194304} value={maxBytes} onChange={(e) => setMaxBytes(Number(e.target.value))} /></F>
         <F id="calls_per_minute" label="Calls per minute" help="1–120"><input id="c-calls_per_minute" className="input" type="number" min={1} max={120} value={rate} onChange={(e) => setRate(Number(e.target.value))} /></F>
@@ -206,9 +278,20 @@ function ConnectionDetail({ id, meta, onBack }: { id: number; meta: Meta; onBack
     await api(`/connector/connections/${id}/tools/${encodeURIComponent(t.name)}/permission`, { method: 'PUT', json: { permission, confirm_risk } })
   })
   const authorize = () => act('oauth', async () => {
-    const r = await api<{ authorization_url: string }>(`/connector/connections/${id}/oauth/start`, { method: 'POST' })
-    window.open(r.authorization_url, '_blank', 'noopener,noreferrer')
-    toast('Complete authorization in the new tab, then run “Test & discover”.')
+    try {
+      const r = await api<{ ok: boolean; authorization_url: string; strategy: string }>(`/connector/connections/${id}/oauth/start`, { method: 'POST' })
+      window.open(r.authorization_url, '_blank', 'noopener,noreferrer')
+      toast(`Authorizing via ${r.strategy}. Complete sign-in in the new tab, then run “Test & discover”.`)
+    } catch (e) {
+      const d = e instanceof ApiError ? (e.details as unknown) : null
+      const body = (e instanceof ApiError ? e : null) as (ApiError & { message: string }) | null
+      toast(body?.message ?? 'Authorization could not start', true)
+      void d
+    }
+  })
+  const diagnose = () => act('diag', async () => {
+    const r = await api<{ ok: boolean; message?: string; diagnostics?: Diag }>(`/connector/connections/${id}/oauth/diagnose`, { method: 'POST' })
+    toast(r.ok ? `OAuth ready: ${r.diagnostics?.selected}` : (r.message ?? 'Discovery failed'), !r.ok)
   })
 
   if (!c) return <Spinner />
@@ -224,7 +307,8 @@ function ConnectionDetail({ id, meta, onBack }: { id: number; meta: Meta; onBack
         <div className="actions">
           <RBadge r={c.readiness} />
           <button className="btn primary" disabled={!!busy || !c.enabled} onClick={test}>{busy === 'test' ? 'Testing…' : 'Test & discover'}</button>
-          {c.auth_type === 'oauth' && <button className="btn" disabled={!!busy || !meta.encryption_configured} onClick={authorize}>{c.has_credential ? 'Re-authorize' : 'Authorize'}</button>}
+          {c.auth_type === 'oauth' && <button className="btn" disabled={!!busy} onClick={diagnose}>{busy === 'diag' ? 'Checking…' : 'Check OAuth'}</button>}
+          {c.auth_type === 'oauth' && <button className="btn" disabled={!!busy || !meta.encryption_configured} onClick={authorize}>{c.has_credential ? 'Re-authorize' : 'Sign in with OAuth'}</button>}
           <button className="btn" onClick={() => setEditing(true)}>Edit</button>
           <button className="btn" onClick={() => act('toggle', () => api(`/connector/connections/${id}`, { method: 'PATCH', json: { enabled: !c.enabled } }))}>{c.enabled ? 'Disable' : 'Enable'}</button>
           {c.has_credential && <button className="btn danger" onClick={() => confirm('Revoke and erase the stored credential?') && act('revoke', () => api(`/connector/connections/${id}/revoke-credential`, { method: 'POST' }))}>Revoke credential</button>}
@@ -237,13 +321,54 @@ function ConnectionDetail({ id, meta, onBack }: { id: number; meta: Meta; onBack
           <dt>Status</dt><dd>{c.status}{c.last_error ? ` — ${c.last_error}` : ''}</dd>
           <dt>Server</dt><dd>{c.server_name ? `${c.server_name} ${c.server_version ?? ''}` : <span className="unknown">Not yet contacted</span>}</dd>
           <dt>Protocol</dt><dd>{c.protocol_version ?? <span className="unknown">—</span>} · Streamable HTTP</dd>
-          <dt>Authentication</dt><dd>{c.auth_type}{c.has_credential ? ` · stored ${c.auth_hint ?? ''}` : c.auth_type !== 'none' ? ' · no credential' : ''}</dd>
+          <dt>Authentication</dt><dd>{c.auth_type}{c.auth_type === 'oauth' ? ` · ${c.oauth_mode === 'preregistered' ? `pre-registered app (${c.oauth_client_id ?? 'no client id'}${c.has_client_secret ? ', confidential' : ''})` : 'automatic registration'}` : ''}{c.has_credential ? ` · stored ${c.auth_hint ?? ''}` : c.auth_type !== 'none' ? ' · no credential' : ''}</dd>
+          {c.auth_type === 'oauth' && <><dt>OAuth</dt><dd>{c.oauth_authorized_at ? `Authorized ${c.oauth_authorized_at}` : 'Not authorized'}{c.oauth_token_expires_at ? ` · token expires ${c.oauth_token_expires_at}` : ''}{c.oauth_last_refresh_at ? ` · last refresh ${c.oauth_last_refresh_at}` : ''}</dd></>}
           <dt>Limits</dt><dd>{c.timeout_ms} ms · {Math.round(c.max_response_bytes / 1024)} KB · {c.calls_per_minute}/min</dd>
           <dt>Last check</dt><dd>{c.last_check_at ?? <span className="unknown">Never</span>}</dd>
           <dt>Last verified call</dt><dd>{c.last_verified_at ?? <span className="unknown">Never: a successful health check does not prove invocation works</span>}</dd>
           <dt>Tools refreshed</dt><dd>{c.tools_refreshed_at ?? <span className="unknown">Never</span>}</dd>
         </dl>
       </section>
+
+      {c.stages && (
+        <section className="panel" aria-labelledby="stages-h">
+          <h3 id="stages-h">Connection stages</h3>
+          <ol className="steps" style={{ marginTop: 10 }}>
+            {([
+              ['endpoint_reachable', 'Endpoint reachable'],
+              ['oauth_configured', 'OAuth configured'],
+              ['account_authorized', 'Account authorized'],
+              ['mcp_initialized', 'MCP initialized'],
+              ['tools_discovered', 'Tools discovered'],
+              ['invocation_verified', 'Tool invocation verified'],
+            ] as const).map(([k, label]) => {
+              const v = c.stages![k]
+              return (
+                <li key={k}>
+                  <span>{label}</span>
+                  <span className={`badge ${v === 'ok' ? 'good' : v === 'failed' || v === 'missing' || v === 'missing_client_id' ? 'bad' : ''}`}>{v === 'ok' ? 'Passed' : v === 'n/a' ? 'Not applicable' : v === 'unknown' ? 'Pending' : v.replace(/_/g, ' ')}</span>
+                </li>
+              )
+            })}
+          </ol>
+          <p className="muted small" style={{ marginBottom: 0 }}>Completing OAuth sign-in does not prove data access. A connection becomes <strong>Ready</strong> only after a test, tool discovery, an approval, and a successful invocation.</p>
+        </section>
+      )}
+
+      {c.auth_type === 'oauth' && c.oauth_diagnostics && (
+        <section className="panel" aria-labelledby="diag-h">
+          <h3 id="diag-h">OAuth discovery</h3>
+          {c.oauth_diagnostics.message && <p className={`notice ${c.oauth_diagnostics.stage_reached === 'ready' ? 'info' : 'error'}`} style={{ marginTop: 6 }}>{c.oauth_diagnostics.message}{c.oauth_diagnostics.next_action ? <><br /><strong>Next:</strong> {c.oauth_diagnostics.next_action}</> : null}</p>}
+          <dl className="kv">
+            <dt>Protected resource metadata</dt><dd>{c.oauth_diagnostics.resource_metadata?.found ? `Found (${c.oauth_diagnostics.resource_metadata.source})` : 'Not found'}</dd>
+            <dt>Authorization server</dt><dd>{c.oauth_diagnostics.authorization_server?.found ? `${c.oauth_diagnostics.authorization_server.issuer ?? ''} (${c.oauth_diagnostics.authorization_server.discovery})` : 'Not found'}</dd>
+            <dt>PKCE S256</dt><dd>{c.oauth_diagnostics.authorization_server?.pkce_s256 === null ? 'Not advertised (S256 will be sent)' : c.oauth_diagnostics.authorization_server?.pkce_s256 ? 'Supported' : 'Not supported'}</dd>
+            <dt>Registration methods</dt><dd>{[c.oauth_diagnostics.authorization_server?.cimd && 'Client ID Metadata Document', c.oauth_diagnostics.authorization_server?.dcr && 'Dynamic Client Registration'].filter(Boolean).join(', ') || 'None advertised; a pre-registered OAuth app is required'}</dd>
+            <dt>Selected strategy</dt><dd>{c.oauth_diagnostics.selected ?? '—'}</dd>
+            {c.oauth_diagnostics.resource_metadata?.scopes_supported?.length ? <><dt>Scopes</dt><dd>{c.oauth_diagnostics.resource_metadata.scopes_supported.join(' ')}</dd></> : null}
+          </dl>
+        </section>
+      )}
 
       <section className="panel">
         <h3>Tools ({c.tools.filter((t) => t.present).length})</h3>
