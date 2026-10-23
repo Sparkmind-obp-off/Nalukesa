@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { api } from './api'
 import { Badge, Dialog, Spinner, toast } from './ui'
+import { Connections } from './Connections'
 
 interface TokenRow { id: number; name: string; token_prefix: string; scopes: string; created_at: string; expires_at: string | null; revoked_at: string | null; last_used_at: string | null }
 interface Info {
@@ -88,7 +89,7 @@ export function Integrations() {
         <div>
           <p className="eyebrow">System</p>
           <h1 className="title">MCP & integrations</h1>
-          <p className="lede">Inbound: let approved AI clients read selected NALUKESA data through MCP. Outbound: providers NALUKESA may query. Everything is read-only.</p>
+          <p className="lede">Inbound: let approved AI clients read selected NALUKESA data through MCP. Outbound: connect NALUKESA to any external MCP server, approve individual tools, and call them.</p>
         </div>
       </div>
 
@@ -142,8 +143,10 @@ export function Integrations() {
         )}
       </section>
 
+      <Connections />
+
       <section className="panel" aria-labelledby="hub-h">
-        <h3 id="hub-h">Outbound providers (MCP hub)</h3>
+        <h3 id="hub-h">Built-in provider templates (legacy registry)</h3>
         <p className="muted small" style={{ marginTop: 0 }}>Explicit allowlist. A provider is contacted only when you press Check, and only after its URL and secret are set as Cloudflare secrets. “Configured” means unverified.</p>
         <ul className="listplain">
           {providers.map((p) => (
