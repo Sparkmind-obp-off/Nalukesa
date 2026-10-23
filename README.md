@@ -7,15 +7,18 @@ NALUKESA is the umbrella brand and private operating workspace for discovering, 
 
 NALUKESA is **not a marketplace**. No inventory, cart, checkout, payments, or seller onboarding.
 
-## Status — v0.2.0 (private pilot)
+## Status — v0.3.0 (private pilot)
 | Item | Status |
 |---|---|
 | Production URL | https://nalukesa.pages.dev (owner login required) |
 | Hosting | Cloudflare Pages project `nalukesa` (owner's own Cloudflare account) |
 | Database | Cloudflare D1 `nalukesa-production`, migration `0001` applied. **Contains no data**: no research records exist yet |
 | Auth | Owner-only password session. Secrets `OWNER_PASSWORD` and `SESSION_SECRET` are stored as Cloudflare Pages secrets |
+| Production URL (custom domain) | https://nalukesa.biz.id |
+| MCP server | `POST /mcp`: 5 read-only tools, scoped bearer tokens issued in the UI. See [docs/mcp-architecture.md](docs/mcp-architecture.md) |
+| Outbound hub | Adapters (MCP + REST) built and tested against local mocks; **no real provider configured** |
 | Integrations | None connected (Shopee/TikTok: manual entry and CSV only; AI: disabled) |
-| Checks | `npm run check`: typecheck ✓, lint ✓, 19/19 unit tests ✓, build ✓ · `scripts/smoke.sh`: 34/34 API checks ✓ (local D1) |
+| Checks | `npm run check`: typecheck ✓, lint ✓, 57/57 tests ✓, build ✓ · `scripts/smoke.sh` 34/34 ✓ · `scripts/mcp-smoke.sh` 57/57 ✓ (local D1) |
 
 ## Features (implemented and verified)
 - **Overview:** counts and next actions computed only from stored records. It flags stale offers (>30 days), reviews due, experiments without a decision, and published content without performance data. Outcome totals only include snapshots that actually recorded the metric.
@@ -29,6 +32,7 @@ NALUKESA is **not a marketplace**. No inventory, cart, checkout, payments, or se
 - **Performance snapshots (append-only):** views, clicks, orders, *approved* commission, cancellations/returns, data source. A blank field means **not recorded**, never zero.
 - **Decision log (append-only):** scale candidate / iterate / hold / stop, with rationale, evidence refs, owner and review date. Each record's detail page shows its decision history.
 - **CSV:** export every entity. Import works as validate → preview with row-level errors → confirm. The import is atomic: one bad row aborts everything.
+- **MCP & integrations:** issue/revoke scoped MCP tokens, view tools, check outbound providers.
 - **Settings:** live health check, enforced guardrails, integration status, audit log.
 - **Security:** see `docs/technical-architecture.md`. In short: auth on every private endpoint, input validation, http(s)-only URLs, body limits, login throttling, CSP and security headers, `noindex`.
 
@@ -83,4 +87,4 @@ Back up the database with `npx wrangler d1 export nalukesa-production --remote -
 ## Documentation
 [Brand architecture](docs/brand-architecture.md) · [Niche validation](docs/niche-validation.md) · [Product intelligence](docs/product-intelligence.md) · [Content playbook](docs/content-playbook.md) · [Metrics & decisions](docs/metrics-and-decisions.md) · [Technical architecture](docs/technical-architecture.md) · [Full-stack blueprint](docs/full-stack-blueprint.md) · [Roadmap](docs/roadmap.md) · [Implementation backlog](docs/implementation-backlog.md) · [Acceptance criteria](docs/acceptance-criteria.md) · [Compliance & trust](docs/compliance-and-trust.md) · [Genspark master prompt](docs/master-system-prompt-genspark.md)
 
-_Last updated: 2026-10-23_
+_Last updated: 2026-10-23 (v0.3.0)_

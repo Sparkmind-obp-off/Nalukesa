@@ -50,6 +50,17 @@ Priorities: **P0** blocks foundation, **P1** core workflow, **P2** persistence/s
 - [x] CSV import validation report with row-level errors.
 - [ ] Data export and delete flows.
 
+## MCP dual-stack (v0.3.0) — branch `feat/nalukesa-mcp-dual-stack`
+- [x] Inbound MCP server `/mcp` (official SDK, stateless Streamable HTTP, JSON responses) with 5 read-only tools.
+- [x] Scoped, expiring, revocable bearer tokens (hash-only storage), per-token rate limit, origin check, audit.
+- [x] Shared domain services (`src/worker/domain.ts`) used by MCP tools.
+- [x] Outbound hub: official SDK MCP client adapter, REST adapter, provider registry, SSRF guard, redaction.
+- [x] Mock MCP + REST provider tests (local only); 57 unit tests; 57 MCP e2e checks; 34 API regression checks.
+- [x] Owner UI: MCP & integrations page (tokens, tools, provider checks).
+- [ ] OAuth 2.1 authorization for clients that require it (not implemented — documented limitation).
+- [ ] Real provider integration (needs eligibility, terms, credentials and owner approval).
+- [ ] Atomic/global rate limiting (current: best-effort D1 fixed window).
+
 ## P4 — Research integrations (conditional)
 - [ ] Inventory eligible official APIs and permitted exports.
 - [ ] Record provider terms, required scopes, rate limits, and costs.

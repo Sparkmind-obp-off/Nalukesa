@@ -1,6 +1,6 @@
 # Technical Architecture
 
-## Current implementation (v0.2.0, M1–M4 foundation)
+## Current implementation (v0.3.0, M1–M4 foundation + MCP dual-stack)
 - **Frontend:** React 19 + TypeScript + Vite SPA in `web/`. Hash routing (`#/niches/3`). CSS design tokens in `web/src/styles.css` preserve the approved prototype palette.
 - **API:** Hono on Cloudflare Pages Functions (advanced mode). `src/worker/index.ts` is bundled by esbuild into `dist/_worker.js`; `dist/_routes.json` routes only `/api/*` to the Worker, everything else is static.
 - **Shared domain:** `src/shared/entities.ts` defines every entity/field once. It drives server validation, SQL column whitelists, CSV columns, forms and tables.
@@ -10,6 +10,7 @@
 - **Hardening:** unknown fields rejected (no mass assignment), only http(s) URLs accepted, body limits (4 KB login, 64 KB writes, 1 MB CSV), React escaping (no `dangerouslySetInnerHTML`), external links `noopener noreferrer`, CSV formula-injection guard on export, secure headers, `Cache-Control: no-store` on API, safe error messages (no stack traces).
 - **CSV:** validate → preview row-level errors → explicit commit. Commit is atomic (D1 batch); any invalid row aborts the whole import. Max 500 rows.
 - **Audit:** create/update/delete/import/export/login events in `audit_events` (no secrets, field names only for updates).
+- **MCP dual-stack (v0.3.0):** inbound MCP server at `/mcp` and an outbound MCP/REST hub. Both are read-only. Details: [mcp-architecture](mcp-architecture.md), [mcp-security](mcp-security.md), [mcp-local-testing](mcp-local-testing.md). Shared read services live in `src/worker/domain.ts`. The routes manifest now includes `/mcp`.
 - **Legacy:** the original static prototype is preserved at `legacy/prototype.html` (not deployed).
 
 ### Endpoints
@@ -26,6 +27,10 @@
 | GET | `/api/export/:entity.csv` | full export incl. ids/timestamps |
 | POST | `/api/import/:entity/validate` · `/commit` | CSV body (`text/csv`) |
 | GET | `/api/audit` | latest 100 events |
+| POST | `/mcp` | MCP Streamable HTTP (stateless JSON); bearer token, not session |
+| GET | `/api/mcp/info` | endpoint, tools, scopes, token metadata (no secrets) |
+| POST | `/api/mcp/tokens` · `/api/mcp/tokens/:id/revoke` | issue (shown once) / revoke |
+| GET | `/api/hub/providers` · POST `/api/hub/providers/:id/check` | outbound provider status / explicit check |
 
 Entities: `niches, products, offer_snapshots, evidence_sources, observations, experiments, content_items, performance_snapshots, decisions`.
 
