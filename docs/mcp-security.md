@@ -41,3 +41,38 @@ These credentials are independent of each other:
 - The rate limit is best-effort (see above).
 - Single-owner workspace. There is no tenant isolation because there is only one tenant.
 - The DNS-rebinding check relies on the `Origin` header. Non-browser clients are authenticated by token only.
+
+## Generic external connector
+- **Endpoint validation at registration and on every request:**
+  - `https:` only, port 443, no userinfo;
+  - no IP literals (v4, v6, decimal, hex);
+  - no `localhost` / `.local` / `.internal` / `.lan` / `metadata*` / single-label hosts;
+  - never NALUKESA's own hosts (`nalukesa.biz.id`, `*.nalukesa.pages.dev`, or the current request host).
+- **DNS validation:**
+  - before the first request to each host, every A and AAAA record (resolved via DNS-over-HTTPS) must be a public unicast address;
+  - private, loopback, link-local, CGNAT, multicast, documentation, NAT64, 6to4 and IPv4-mapped private addresses are blocked;
+  - a mixed answer (one public record, one private) is rejected.
+  - **Limitation:** Workers cannot pin the TCP connection to the validated IP. Cloudflare's egress does not route to RFC 1918 space anyway. The DNS check narrows the rebinding window but does not close it entirely.
+- **Per-connection host allowlist:** the endpoint host plus OAuth hosts discovered and validated during authorization.
+- **Redirects:** never followed (`redirect: 'manual'`). Any 3xx is treated as `blocked`.
+- **Limits:**
+  - the deadline covers both headers and the **whole body read**, so a slow body triggers the timeout;
+  - the byte cap is enforced while streaming, so chunked bodies without `Content-Length` are bounded as well as declared ones;
+  - an overall ceiling of 3× the timeout applies per operation;
+  - arguments ≤ 32 KB; at most 200 tools per catalog.
+- **Credentials:**
+  - AES-256-GCM, with AAD binding each ciphertext to its connection id;
+  - key in the Cloudflare secret `CONNECTOR_ENC_KEY`;
+  - never returned to the browser (`has_credential` / `auth_hint` only), never logged, and redacted from errors and from tool results that reflect them.
+- **Authorization:**
+  - owner session on all management and invoke routes;
+  - unknown fields rejected;
+  - per-tool permission checked at call time;
+  - write/destructive tools need explicit `confirm_risk`;
+  - approvals revoked automatically on catalog change or endpoint change.
+- **Untrusted output:** tool results are data. They are never executed, never used to call other tools automatically, and never used to change NALUKESA records. UI and bridge responses carry an explicit untrusted label.
+- **Throttling:** per-connection calls/minute (D1 fixed window, best-effort) plus the remote server's own 429 responses, which are surfaced as `rate_limited`.
+- **Audit:**
+  - `mcp_invocations` records status, latency, argument *keys* (not values), sizes, a truncated redacted result preview, and a redacted error;
+  - `audit_events` records create, update, test, permission, OAuth and delete events.
+- **Local testing only:** `CONNECTOR_ALLOW_LOCAL=true` is honoured only together with `APP_ENV=development`. It is never set in production.

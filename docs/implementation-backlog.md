@@ -61,6 +61,18 @@ Priorities: **P0** blocks foundation, **P1** core workflow, **P2** persistence/s
 - [ ] Real provider integration (needs eligibility, terms, credentials and owner approval).
 - [ ] Atomic/global rate limiting (current: best-effort D1 fixed window).
 
+## Generic external MCP connector (v0.4.0, main)
+- [x] Connection registry in D1 (migration 0003), with credentials encrypted using AES-256-GCM (key held in a Cloudflare secret).
+- [x] Streamable HTTP client via the official SDK: initialize, paginated tools/list, tools/call, session cleanup.
+- [x] Auth: none, bearer, and OAuth 2.1 (discovery + DCR + PKCE + state + refresh).
+- [x] Endpoint, DNS, and host-allowlist SSRF guard; no redirects; deadline also covers body reads; streaming byte cap.
+- [x] Per-tool approval with risk classification and explicit write/destructive confirmation; approvals revoked on schema change.
+- [x] Schema-validated invocation, normalized and redacted results with provenance, invocation log and audit trail.
+- [x] Inbound bridge tools (read-only external tools only) and recursion guard.
+- [x] Owner UI for connection management.
+- [ ] OAuth with pre-registered clients (no DCR); custom auth header names.
+- [ ] First real third-party provider (needs the owner's account and credentials).
+
 ## P4 — Research integrations (conditional)
 - [ ] Inventory eligible official APIs and permitted exports.
 - [ ] Record provider terms, required scopes, rate limits, and costs.
