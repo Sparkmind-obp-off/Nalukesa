@@ -83,68 +83,132 @@ createServer(async (req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' })
       return res.end('{"jsonrpc":"2.0", this is not json')
     }
-    // ---- OAuth metadata ----
-    if (p === '/.well-known/oauth-protected-resource/mcp-oauth' || p === '/.well-known/oauth-protected-resource') {
-      return json(res, 200, { resource: `${BASE}/mcp-oauth`, authorization_servers: [BASE], scopes_supported: ['mcp.read'] })
+    // ---- OAuth: several independently-behaving authorization servers ----
+    // Profiles (path prefix = issuer):
+    //   /as-dcr     RFC 8414 metadata, DCR, public clients, refresh rotation, 2s access tokens
+    //   /as-cimd    OIDC discovery (path-append), CIMD only (no registration_endpoint)
+    //   /as-prereg  RFC 8414, NO DCR, NO CIMD; pre-registered confidential client (client_secret_basic)
+    //   /as-bad-*   misbehaving servers for negative tests
+    const prof = (pr) => ({
+      issuer: `${BASE}${pr}`,
+      authorization_endpoint: `${BASE}${pr}/authorize`,
+      token_endpoint: `${BASE}${pr}/token`,
+      response_types_supported: ['code'],
+      grant_types_supported: ['authorization_code', 'refresh_token'],
+      code_challenge_methods_supported: ['S256'],
+    })
+    const META = {
+      '/as-dcr': { ...prof('/as-dcr'), registration_endpoint: `${BASE}/as-dcr/register`, token_endpoint_auth_methods_supported: ['none'] },
+      '/as-cimd': { ...prof('/as-cimd'), client_id_metadata_document_supported: true, token_endpoint_auth_methods_supported: ['none'], jwks_uri: `${BASE}/as-cimd/jwks`, subject_types_supported: ['public'], id_token_signing_alg_values_supported: ['RS256'] },
+      '/as-prereg': { ...prof('/as-prereg'), token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'] },
+      '/as-bad-nopkce': { ...prof('/as-bad-nopkce'), code_challenge_methods_supported: ['plain'], registration_endpoint: `${BASE}/as-bad-nopkce/register` },
+      '/as-bad-issuer': { ...prof('/as-bad-issuer'), issuer: 'https://evil.example', registration_endpoint: `${BASE}/as-bad-issuer/register` },
+      '/as-bad-ssrf': { ...prof('/as-bad-ssrf'), token_endpoint: 'http://169.254.169.254/token', registration_endpoint: `${BASE}/as-bad-ssrf/register` },
+      '/as-badtoken': { ...prof('/as-badtoken'), registration_endpoint: `${BASE}/as-badtoken/register` },
     }
-    if (p === '/.well-known/oauth-authorization-server') {
-      return json(res, 200, {
-        issuer: BASE,
-        authorization_endpoint: `${BASE}/authorize`,
-        token_endpoint: `${BASE}/token`,
-        registration_endpoint: `${BASE}/register`,
-        response_types_supported: ['code'],
-        grant_types_supported: ['authorization_code', 'refresh_token'],
-        code_challenge_methods_supported: ['S256'],
-        token_endpoint_auth_methods_supported: ['none'],
-      })
+    // RFC 8414 path-insertion: /.well-known/oauth-authorization-server/<issuer-path>
+    let m = p.match(/^\/\.well-known\/oauth-authorization-server(\/as-[a-z-]+)$/)
+    if (m && META[m[1]] && m[1] !== '/as-cimd') return json(res, 200, META[m[1]])
+    // OIDC discovery (path-append): /<issuer-path>/.well-known/openid-configuration — only as-cimd
+    m = p.match(/^(\/as-[a-z-]+)\/\.well-known\/openid-configuration$/)
+    if (m && m[1] === '/as-cimd') return json(res, 200, META['/as-cimd'])
+    // Protected-resource metadata for each resource
+    m = p.match(/^\/\.well-known\/oauth-protected-resource\/(mcp-oauth|mcp-cimd|mcp-prereg|mcp-bad-[a-z]+|mcp-badtoken|mcp-wrongres)$/)
+    if (m) {
+      const r = m[1]
+      const as = { 'mcp-oauth': '/as-dcr', 'mcp-cimd': '/as-cimd', 'mcp-prereg': '/as-prereg', 'mcp-bad-nopkce': '/as-bad-nopkce', 'mcp-bad-issuer': '/as-bad-issuer', 'mcp-bad-ssrf': '/as-bad-ssrf', 'mcp-bad-privateas': null, 'mcp-badtoken': '/as-badtoken', 'mcp-wrongres': '/as-dcr' }[r]
+      if (r === 'mcp-bad-privateas') return json(res, 200, { resource: `${BASE}/mcp-bad-privateas`, authorization_servers: ['https://10.0.0.5/'] })
+      if (r === 'mcp-bad-nometa') return json(res, 200, { resource: `${BASE}/mcp-bad-nometa`, authorization_servers: [`${BASE}/as-none`] })
+      return json(res, 200, { resource: r === 'mcp-wrongres' ? 'https://other.example/mcp' : `${BASE}/${r}`, authorization_servers: [`${BASE}${as}`], scopes_supported: ['mcp.read'] })
     }
-    if (p === '/register' && req.method === 'POST') {
-      const meta = JSON.parse(body.toString())
-      const client_id = 'client_' + randomBytes(6).toString('hex')
-      oauth.clients.set(client_id, meta)
-      return json(res, 201, { ...meta, client_id, client_id_issued_at: Math.floor(Date.now() / 1000) })
-    }
-    if (p === '/authorize') {
-      // auto-approve: redirect back with code (test harness follows manually)
-      const q = url.searchParams
-      if (q.get('code_challenge_method') !== 'S256' || !q.get('code_challenge')) return json(res, 400, { error: 'pkce_required' })
-      if (!oauth.clients.has(q.get('client_id'))) return json(res, 400, { error: 'unknown_client' })
-      const code = 'code_' + randomBytes(8).toString('hex')
-      oauth.codes.set(code, { challenge: q.get('code_challenge'), client_id: q.get('client_id'), redirect_uri: q.get('redirect_uri'), resource: q.get('resource') })
-      const back = new URL(q.get('redirect_uri'))
-      back.searchParams.set('code', code)
-      back.searchParams.set('state', q.get('state'))
-      return json(res, 200, { redirect: back.toString() })
-    }
-    if (p === '/token' && req.method === 'POST') {
-      const f = new URLSearchParams(body.toString())
-      if (f.get('grant_type') === 'authorization_code') {
-        const c = oauth.codes.get(f.get('code'))
-        oauth.codes.delete(f.get('code'))
-        if (!c || sha256b64u(f.get('code_verifier') ?? '') !== c.challenge || c.redirect_uri !== f.get('redirect_uri')) return json(res, 400, { error: 'invalid_grant' })
-        const at = 'oat_' + randomBytes(12).toString('hex')
-        const rt = 'ort_' + randomBytes(12).toString('hex')
-        oauth.tokens.set(at, Date.now() + 2000) // 2s lifetime → forces refresh path in tests
-        oauth.refresh.set(rt, true)
-        return json(res, 200, { access_token: at, token_type: 'Bearer', expires_in: 2, refresh_token: rt, scope: 'mcp.read' })
+    m = p.match(/^(\/as-[a-z-]+)\/(register|authorize|token)$/)
+    if (m && META[m[1]]) {
+      const pr = m[1], op = m[2]
+      if (op === 'register' && req.method === 'POST') {
+        if (!META[pr].registration_endpoint) return json(res, 404, { error: 'not_supported' })
+        const meta = JSON.parse(body.toString())
+        const client_id = 'dcr_' + randomBytes(6).toString('hex')
+        oauth.clients.set(client_id, { ...meta, pr })
+        return json(res, 201, { ...meta, client_id, client_id_issued_at: Math.floor(Date.now() / 1000) })
       }
-      if (f.get('grant_type') === 'refresh_token') {
-        if (!oauth.refresh.get(f.get('refresh_token'))) return json(res, 400, { error: 'invalid_grant' })
-        const at = 'oat_' + randomBytes(12).toString('hex')
-        oauth.tokens.set(at, Date.now() + 3600_000)
-        return json(res, 200, { access_token: at, token_type: 'Bearer', expires_in: 3600 })
+      if (op === 'authorize') {
+        const q = url.searchParams
+        if (q.get('code_challenge_method') !== 'S256' || !q.get('code_challenge')) return json(res, 400, { error: 'pkce_required' })
+        const cid = q.get('client_id')
+        let client = oauth.clients.get(cid)
+        if (pr === '/as-cimd') {
+          // CIMD: client_id is an HTTPS(dev: http localhost) URL; fetch it and verify redirect_uri
+          if (!/^https?:\/\//.test(cid)) return json(res, 400, { error: 'invalid_client', error_description: 'client_id must be a metadata URL' })
+          try {
+            const doc = await (await fetch(cid)).json()
+            if (doc.client_id !== cid) return json(res, 400, { error: 'invalid_client', error_description: 'client_id mismatch in metadata document' })
+            client = { ...doc, pr }
+            oauth.clients.set(cid, client)
+          } catch { return json(res, 400, { error: 'invalid_client', error_description: 'metadata document fetch failed' }) }
+        }
+        if (pr === '/as-prereg') client = cid === 'prereg-client' ? { redirect_uris: null, pr, secret: 'prereg-secret-value' } : undefined
+        if (!client) return json(res, 400, { error: 'unknown_client' })
+        if (client.redirect_uris && !client.redirect_uris.includes(q.get('redirect_uri'))) return json(res, 400, { error: 'invalid_redirect_uri' })
+        if (q.get('resource') && !q.get('resource').startsWith(BASE)) return json(res, 400, { error: 'invalid_target' })
+        const code = 'code_' + randomBytes(8).toString('hex')
+        oauth.codes.set(code, { pr, challenge: q.get('code_challenge'), client_id: cid, redirect_uri: q.get('redirect_uri'), resource: q.get('resource') })
+        const back = new URL(q.get('redirect_uri'))
+        if (url.searchParams.get('simulate_error')) back.searchParams.set('error', 'access_denied')
+        else back.searchParams.set('code', code)
+        back.searchParams.set('state', q.get('state'))
+        back.searchParams.set('iss', META[pr].issuer)
+        return json(res, 200, { redirect: back.toString() })
       }
-      return json(res, 400, { error: 'unsupported_grant_type' })
+      if (op === 'token' && req.method === 'POST') {
+        const f = new URLSearchParams(body.toString())
+        // client authentication
+        let cid = f.get('client_id')
+        const basic = (req.headers.authorization ?? '').match(/^Basic (.+)$/)
+        if (basic) {
+          const [u, pw] = Buffer.from(basic[1], 'base64').toString().split(':')
+          cid = decodeURIComponent(u)
+          if (pr === '/as-prereg' && (cid !== 'prereg-client' || decodeURIComponent(pw) !== 'prereg-secret-value')) return json(res, 401, { error: 'invalid_client' })
+        } else if (pr === '/as-prereg') {
+          if (cid !== 'prereg-client' || f.get('client_secret') !== 'prereg-secret-value') return json(res, 401, { error: 'invalid_client' })
+        }
+        if (pr === '/as-badtoken') return json(res, 400, { error: 'invalid_grant', error_description: 'simulated token endpoint failure' })
+        if (f.get('grant_type') === 'authorization_code') {
+          const c = oauth.codes.get(f.get('code'))
+          oauth.codes.delete(f.get('code'))
+          if (!c || c.pr !== pr || c.client_id !== cid || sha256b64u(f.get('code_verifier') ?? '') !== c.challenge || c.redirect_uri !== f.get('redirect_uri')) return json(res, 400, { error: 'invalid_grant' })
+          const at = 'oat_' + randomBytes(12).toString('hex')
+          const rt = 'ort_' + randomBytes(12).toString('hex')
+          oauth.tokens.set(at, { exp: Date.now() + 2000, aud: c.resource })
+          oauth.refresh.set(rt, { pr, cid, resource: c.resource })
+          return json(res, 200, { access_token: at, token_type: 'Bearer', expires_in: 2, refresh_token: rt, scope: 'mcp.read' })
+        }
+        if (f.get('grant_type') === 'refresh_token') {
+          const r = oauth.refresh.get(f.get('refresh_token'))
+          if (!r || r.pr !== pr) return json(res, 400, { error: 'invalid_grant' })
+          // rotation: old refresh token is invalidated, a new one is issued
+          oauth.refresh.delete(f.get('refresh_token'))
+          oauth.rotations = (oauth.rotations ?? 0) + 1
+          const at = 'oat_' + randomBytes(12).toString('hex')
+          const rt = 'ort_' + randomBytes(12).toString('hex')
+          oauth.refresh.set(rt, r)
+          oauth.tokens.set(at, { exp: Date.now() + 3600_000, aud: r.resource })
+          return json(res, 200, { access_token: at, token_type: 'Bearer', expires_in: 3600, refresh_token: rt })
+        }
+        return json(res, 400, { error: 'unsupported_grant_type' })
+      }
     }
+    if (p === '/admin/oauth-stats') return json(res, 200, { rotations: oauth.rotations ?? 0, active_refresh_tokens: oauth.refresh.size })
     // ---- MCP endpoints ----
-    if (p === '/mcp' || p === '/mcp-open' || p === '/mcp-oauth') {
+    const OAUTH_MCP = ['/mcp-oauth', '/mcp-cimd', '/mcp-prereg', '/mcp-bad-nopkce', '/mcp-bad-issuer', '/mcp-bad-ssrf', '/mcp-bad-privateas', '/mcp-bad-nometa', '/mcp-badtoken', '/mcp-wrongres']
+    if (p === '/mcp-nooauth') return json(res, 401, { error: 'unauthorized' }) // no WWW-Authenticate, no metadata
+    if (p === '/mcp' || p === '/mcp-open' || OAUTH_MCP.includes(p)) {
       const auth = req.headers.authorization ?? ''
       if (p === '/mcp' && auth !== `Bearer ${GOOD}`) return json(res, 401, { error: 'unauthorized' }, { 'www-authenticate': 'Bearer realm="mock"' })
-      if (p === '/mcp-oauth') {
+      if (OAUTH_MCP.includes(p)) {
         const tok = auth.replace(/^Bearer /, '')
-        const exp = oauth.tokens.get(tok)
-        if (!exp || exp < Date.now()) return json(res, 401, { error: 'invalid_token' }, { 'www-authenticate': `Bearer resource_metadata="${BASE}/.well-known/oauth-protected-resource/mcp-oauth"` })
+        const t = oauth.tokens.get(tok)
+        // audience binding: token must have been issued for THIS resource
+        if (!t || t.exp < Date.now() || (t.aud && t.aud !== `${BASE}${p}`)) return json(res, 401, { error: 'invalid_token' }, { 'www-authenticate': `Bearer resource_metadata="${BASE}/.well-known/oauth-protected-resource${p}"` })
       }
       const r = await mcp(req, body, req.headers)
       res.writeHead(r.status, Object.fromEntries(r.headers.entries()))

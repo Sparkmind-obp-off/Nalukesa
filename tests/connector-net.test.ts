@@ -110,11 +110,15 @@ describe('IP classification (DNS validation)', () => {
 
 describe('guarded fetch limits', () => {
   it('passes a normal response and injects credentials server-side', async () => {
-    const f = guardedFetch({ ...local(), inject: async () => ({ Authorization: 'Bearer s3cret-token' }) })
+    const f = guardedFetch({ ...local(), injectHost: `127.0.0.1:${port}`, inject: async () => ({ Authorization: 'Bearer s3cret-token' }) })
     const r = await f(url('/echo-headers'))
     const h = (await r.json()) as Record<string, string>
     expect(h.authorization).toBe('Bearer s3cret-token')
     expect(h['x-nk-hop']).toBe('1')
+  })
+  it('refuses credential injection without an explicit target host', async () => {
+    const f = guardedFetch({ ...local(), inject: async () => ({ Authorization: 'Bearer s3cret-token' }) })
+    await expect(f(url('/echo-headers'))).rejects.toThrow(/explicit target host/)
   })
   it('enforces size cap on chunked body without content-length', async () => {
     const r = await guardedFetch(local())(url('/chunked-big'))
