@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nalukesa",
+  "compatibility_date": "2024-09-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "pages_build_output_dir": "./dist",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "nalukesa-production",
+      "database_id": "233ece1c-3d80-4edf-86d3-ffe6f667108d",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
