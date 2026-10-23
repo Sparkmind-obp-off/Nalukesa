@@ -8,6 +8,7 @@ interface Audit { id: number; actor: string; action: string; entity_type: string
 const INTEGRATIONS = [
   { name: 'Shopee Affiliate', status: 'Not connected', note: 'Manual entry / CSV export from your dashboard. Official API eligibility not verified.' },
   { name: 'TikTok Shop Affiliate', status: 'Not connected', note: 'Manual entry / CSV. Official API access, scopes and terms not verified.' },
+  { name: 'NALUKESA MCP server / hub', status: 'See MCP & integrations', note: 'Inbound MCP endpoint (/mcp) with scoped tokens, and outbound provider allowlist.' },
   { name: 'AI research assistant', status: 'Disabled', note: 'Not configured. Would require a server-side provider adapter, source-grounded output and human review.' },
   { name: 'Cloudflare Access', status: 'Recommended', note: 'Optional extra layer in front of the whole site (Zero Trust). Configure in the Cloudflare dashboard.' },
 ]

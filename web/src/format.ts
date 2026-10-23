@@ -20,9 +20,9 @@ export function daysSince(date: string | null | undefined): number | null {
 
 export type Tone = 'good' | 'warn' | 'bad' | 'neutral'
 export function statusTone(s: string): Tone {
-  if (['ok', 'configured', 'Scale candidate', 'Completed', 'Published', 'Disclosed in content', 'Own original', 'Licensed', 'Permission granted', 'A', 'High'].includes(s)) return 'good'
-  if (['degraded', 'unavailable', 'not_configured', 'Rejected', 'Stop', 'Cancelled', 'Unclear — do not publish', 'Not yet', 'D'].includes(s)) return 'bad'
-  if (['Testing', 'Running', 'Ready to test', 'Iterate', 'Approved', 'B', 'Medium'].includes(s)) return 'warn'
+  if (['ok', 'configured', 'Active', 'Enabled', 'Verified', 'Scale candidate', 'Completed', 'Published', 'Disclosed in content', 'Own original', 'Licensed', 'Permission granted', 'A', 'High'].includes(s)) return 'good'
+  if (['degraded', 'unavailable', 'not_configured', 'Revoked', 'Expired', 'Rejected', 'Stop', 'Cancelled', 'Unclear — do not publish', 'Not yet', 'D'].includes(s)) return 'bad'
+  if (['Unverified', 'Testing', 'Running', 'Ready to test', 'Iterate', 'Approved', 'B', 'Medium'].includes(s)) return 'warn'
   return 'neutral'
 }
 

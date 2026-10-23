@@ -6,15 +6,17 @@ import { EntityDetail } from './EntityDetail'
 import { Overview } from './Overview'
 import { ImportExport } from './ImportExport'
 import { Settings } from './Settings'
+import { Integrations } from './Integrations'
 import { Spinner, ToastHost } from './ui'
 
-type Route = { page: 'overview' | 'import' | 'settings' } | { page: 'list'; entity: EntityKey } | { page: 'detail'; entity: EntityKey; id: number } | { page: 'notfound' }
+type Route = { page: 'overview' | 'import' | 'settings' | 'integrations' } | { page: 'list'; entity: EntityKey } | { page: 'detail'; entity: EntityKey; id: number } | { page: 'notfound' }
 
 function parseHash(): Route {
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean)
   if (parts.length === 0 || parts[0] === 'overview') return { page: 'overview' }
   if (parts[0] === 'import') return { page: 'import' }
   if (parts[0] === 'settings') return { page: 'settings' }
+  if (parts[0] === 'integrations') return { page: 'integrations' }
   if (isEntityKey(parts[0])) {
     if (parts[1] && /^\d+$/.test(parts[1])) return { page: 'detail', entity: parts[0], id: Number(parts[1]) }
     return { page: 'list', entity: parts[0] }
@@ -47,6 +49,7 @@ const NAV: { group: string; items: { href: string; label: string; ico: string; e
     group: 'System',
     items: [
       { href: '#/import', label: 'Import / export', ico: '⇅' },
+      { href: '#/integrations', label: 'MCP & integrations', ico: '⌁' },
       { href: '#/settings', label: 'Settings', ico: '⚙' },
     ],
   },
@@ -118,7 +121,7 @@ export function App() {
   const title =
     'entity' in route
       ? ENTITIES[route.entity].label
-      : ({ overview: 'Overview', import: 'Import / export', settings: 'Settings', notfound: 'Not found' } as const)[route.page]
+      : ({ overview: 'Overview', import: 'Import / export', settings: 'Settings', integrations: 'MCP & integrations', notfound: 'Not found' } as const)[route.page]
   useEffect(() => {
     document.title = `${title} — NALUKESA`
   }, [title])
@@ -172,6 +175,7 @@ export function App() {
             {route.page === 'overview' && <Overview />}
             {route.page === 'import' && <ImportExport />}
             {route.page === 'settings' && <Settings />}
+            {route.page === 'integrations' && <Integrations />}
             {route.page === 'notfound' && <div className="notice">Page not found. <a href="#/overview">Go to overview</a></div>}
             {route.page === 'list' && (
               <>
