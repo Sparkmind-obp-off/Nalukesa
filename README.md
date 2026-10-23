@@ -43,3 +43,20 @@ These are hypotheses to test, not proven winners. Selection must be revisited us
 
 ## Deployment
 For a zero-build static prototype, set the Cloudflare Pages build command to blank and the output directory to `/` (or the repository root). No secrets or backend are needed for the prototype. See [technical architecture](docs/technical-architecture.md) before adding real accounts or data storage.
+
+
+## Full-stack and Genspark build pack
+
+- [Full-stack blueprint](docs/full-stack-blueprint.md) — recommended stack, architecture, data model, API outline, security, and delivery phases.
+- [Implementation backlog](docs/implementation-backlog.md) — prioritized engineering work.
+- [Acceptance criteria](docs/acceptance-criteria.md) — QA, security, data integrity, and release gates.
+- [Genspark master system prompt](docs/master-system-prompt-genspark.md) — copy-ready project instruction for Genspark Super Agent.
+- [Genspark execution checklist](docs/genspark-execution-checklist.md) — safe handoff and verification process.
+
+## Recommended technical direction
+
+React + TypeScript + Vite, Cloudflare Pages, Cloudflare Workers API, and Cloudflare D1; R2 is optional. Use owner-only access for the private pilot and CSV/manual research before official integrations. This is a proposal, not a claim that these services are connected or deployed.
+
+## Genspark handoff
+
+Paste the master prompt into your Genspark project, provide the repository and docs, and require an audit before changes. The prompt is ready to use, but no Genspark task is claimed to have been submitted or run from this repository update.
