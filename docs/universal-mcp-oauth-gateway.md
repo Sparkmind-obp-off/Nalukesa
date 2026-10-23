@@ -79,3 +79,10 @@ Not yet verified: a **real third-party provider** end-to-end (requires the owner
 4. Update the UI and docs to show supported registration methods accurately.
 5. Run the full repository check suite, deploy, and perform a real external-server end-to-end authorization test.
 6. Only then mark the universal OAuth gateway as production-verified.
+
+## Deployment evidence (2026-10-23)
+- Commits on `main`: `78cfd73` (gateway), `ab58188` (UI), `8c08d56` (tests), `7c2d0bf` (docs, v0.5.0), `f2f38b1` (diagnostics fix). Deployed with `wrangler pages deploy` (Cloudflare Pages project `nalukesa`, BYOK).
+- D1 `nalukesa-production`: backup exported before migrating; migrations `0001`–`0004` applied remotely.
+- `GET https://nalukesa.biz.id/api/health` → `{"status":"ok","db":"ok"}`; `GET /oauth/client-metadata.json` served over HTTPS with `client_id` equal to its own URL and the exact callback redirect URI.
+- Production E2E (82/82 checks) against a **temporary** mock provider worker (`nalukesa-mcp-mock-temp`, deleted afterwards). DCR, CIMD and pre-registered (`client_secret_basic`) each went through diagnose → start (PKCE S256, exact redirect) → callback → state replay rejected → test & discover → approve → invoke → real tool result → readiness `ready`. Negative cases: auto mode with a provider that has neither DCR nor CIMD → 422 with a pre-registered hint; wrong client secret → callback fails, no credential stored; private endpoint refused. No tokens, codes or secrets appeared in API responses or the audit log. All test connections were deleted.
+- Real external provider: read-only `oauth/diagnose` against an owner-registered remote MCP server (`api.kixmon.io`) reached stage `ready` (PRM via WWW-Authenticate, RFC 8414, PKCE S256, DCR selected). Completing sign-in requires the owner's provider account, so a real-provider authorize + invoke is **not yet verified**.
