@@ -10,6 +10,7 @@ import { handleMcp, TOOL_DEFS, SERVER_INFO } from './mcp/server'
 import { bearer, verifyToken, consumeRate, touchToken, createToken, parseScopes, MCP_SCOPES, RATE_LIMIT_PER_MIN } from './mcp/tokens'
 import { PROVIDERS, checkProvider, providerStatusReport } from './hub/registry'
 import { redact } from './hub/safety'
+import { connectorRoutes, oauthCallback } from './connector/routes'
 
 export type Bindings = {
   DB: D1Database
@@ -20,6 +21,8 @@ export type Bindings = {
   /** Set to "false" to disable the inbound MCP endpoint entirely */
   MCP_ENABLED?: string
   HUB_ALLOWED_HOSTS?: string
+  CONNECTOR_ENC_KEY?: string
+  CONNECTOR_ALLOW_LOCAL?: string
   [key: string]: unknown
 }
 type Env = { Bindings: Bindings }
@@ -147,6 +150,8 @@ function mcpError(status: 400 | 401 | 403 | 404 | 405 | 413 | 429 | 503, message
 }
 app.all('/mcp', async (c) => {
   if (c.env.MCP_ENABLED === 'false') return mcpError(503, 'MCP endpoint disabled')
+  // Recursion guard: requests originating from NALUKESA's own outbound connector are refused
+  if (c.req.header('x-nk-hop')) return mcpError(403, 'Recursive connector call refused')
   // Browsers must not drive this endpoint cross-origin (DNS-rebinding / CSRF defence)
   const origin = c.req.header('origin')
   if (origin && origin !== new URL(c.req.url).origin) return mcpError(403, 'Origin not allowed')
@@ -177,6 +182,14 @@ app.all('/mcp', async (c) => {
   h.set('Cache-Control', 'no-store')
   return new Response(res.body, { status: res.status, headers: h })
 })
+
+// ---------- OAuth callback for outbound connector (owner session required) ----------
+app.get('/api/connector/oauth/callback', async (c, next) => {
+  if (!configured(c.env) || !(await verifySession(c.env.SESSION_SECRET!, getCookie(c, SESSION_COOKIE)))) {
+    return c.html('<!doctype html><meta charset="utf-8"><p>Sign in to NALUKESA first, then restart the authorization.</p><a href="/">Sign in</a>', 401)
+  }
+  await next()
+}, (c) => oauthCallback(c as never))
 
 // ---------- auth gate for everything else under /api ----------
 async function requireOwner(c: Context<Env>, next: Next) {
@@ -387,6 +400,8 @@ app.post('/api/hub/providers/:id/check', async (c) => {
   await audit(c.env, 'provider_check', 'provider', null, { provider: def.id, status: r.status })
   return c.json({ provider_id: def.id, status: r.status, observed_at: r.observed_at, latency_ms: r.latency_ms, detail })
 })
+
+app.route('/api/connector', connectorRoutes as never)
 
 // ---------- generic CRUD ----------
 

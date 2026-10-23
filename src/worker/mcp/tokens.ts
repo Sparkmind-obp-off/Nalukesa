@@ -6,7 +6,7 @@
  */
 import { sha256, timingSafeEqual } from '../auth'
 
-export const MCP_SCOPES = ['products:read', 'evidence:read', 'performance:read', 'providers:read'] as const
+export const MCP_SCOPES = ['products:read', 'evidence:read', 'performance:read', 'providers:read', 'connectors:read', 'connectors:invoke'] as const
 export type McpScope = (typeof MCP_SCOPES)[number]
 export const TOKEN_PREFIX = 'nkmcp_'
 export const RATE_LIMIT_PER_MIN = 60
