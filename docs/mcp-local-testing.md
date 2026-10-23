@@ -13,6 +13,7 @@ npm run check                         # typecheck + lint + unit/hub tests + buil
 PW=<local pw> bash scripts/smoke.sh       # 34 web-API regression checks
 PW=<local pw> bash scripts/mcp-smoke.sh   # 57 MCP end-to-end checks (refuses non-localhost BASE)
 PW=<local pw> bash scripts/connector-smoke.sh  # 129 generic-connector checks against scripts/mock-mcp-server.mjs (:8788)
+PW=<local pw> bash scripts/gateway-smoke.sh    # 102 OAuth gateway checks: DCR, CIMD, pre-registered (basic/post), negative cases, expiry, rotation
 ```
 
 What each test layer covers:
@@ -64,3 +65,6 @@ The numbers refer to the requirement list:
 20. full suite regression.
 
 The mock server runs locally only. These tests do **not** prove that any specific real provider works.
+
+### OAuth gateway coverage (`scripts/gateway-smoke.sh`, `tests/oauth-gateway.test.ts`)
+The mock provider exposes three authorization servers with different behavior: `/as-dcr` (RFC 8414 + DCR, 2-second access tokens, refresh rotation), `/as-cimd` (OIDC discovery only, CIMD only; fetches the client_id document), `/as-prereg` (no DCR/CIMD; confidential client `prereg-client`). Negative profiles: no PKCE, issuer mismatch, metadata URL pointing to a private host, private AS, wrong resource, missing metadata, non-OAuth server, bad token type. The mock authorize endpoint returns the redirect as JSON so scripts (and browsers in tests) can follow it.

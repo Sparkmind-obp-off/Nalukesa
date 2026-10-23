@@ -37,7 +37,7 @@ These credentials are independent of each other:
 - The hub is read-only by design: there is no publish, post, purchase, or message capability.
 
 ## Known limitations
-- **OAuth 2.1 is not implemented.** Static bearer tokens work with clients that accept a custom `Authorization` header (SDK clients, Cursor, `mcp-remote`, Claude Desktop via `mcp-remote`). Clients that *require* the OAuth flow (for example claude.ai remote connectors) cannot connect yet. We do not claim OAuth support.
+- **Inbound OAuth 2.1 (NALUKESA as an authorization server) is not implemented.** Static bearer tokens work with clients that accept a custom `Authorization` header (SDK clients, Cursor, `mcp-remote`, Claude Desktop via `mcp-remote`). Clients that *require* the OAuth flow (for example claude.ai remote connectors) cannot connect yet. We do not claim OAuth support.
 - The rate limit is best-effort (see above).
 - Single-owner workspace. There is no tenant isolation because there is only one tenant.
 - The DNS-rebinding check relies on the `Origin` header. Non-browser clients are authenticated by token only.
@@ -76,3 +76,12 @@ These credentials are independent of each other:
   - `mcp_invocations` records status, latency, argument *keys* (not values), sizes, a truncated redacted result preview, and a redacted error;
   - `audit_events` records create, update, test, permission, OAuth and delete events.
 - **Local testing only:** `CONNECTOR_ALLOW_LOCAL=true` is honoured only together with `APP_ENV=development`. It is never set in production.
+
+## Outbound OAuth gateway (v0.5.0)
+- **Discovery hardening:** protected-resource metadata `resource` must match the endpoint; AS metadata `issuer` must match; `S256` must be supported; authorize/token/registration/revocation URLs and the AS URL are each validated by the SSRF guard (https:443, public DNS, not NALUKESA hosts).
+- **State:** 32 random bytes; only its SHA-256 is stored, bound to the connection and to a hash of the owner session cookie, expires after 10 minutes, consumed atomically (`UPDATE … RETURNING`). Replays, other sessions and expired states are rejected.
+- **Callback:** RFC 9207 `iss` must match when present; provider errors are shown without echoing codes; `code=` values are redacted from logs and audit; response sent with `Referrer-Policy: no-referrer` and `Cache-Control: no-store`.
+- **Secrets at rest:** access/refresh tokens, pre-registered client secret and DCR client information are AES-256-GCM sealed with purpose-bound AAD. The API exposes only `has_credential` / `has_client_secret`.
+- **Refresh:** rotated refresh tokens replace the old ones; failure sets the connection to *auth required* and writes an audit event; no token values are logged.
+- **Token confinement:** the `Authorization` header is injected only to the connection's endpoint host and stripped for any other host (including AS endpoints during MCP traffic).
+- **Changing the endpoint, auth type or OAuth client** erases stored tokens.

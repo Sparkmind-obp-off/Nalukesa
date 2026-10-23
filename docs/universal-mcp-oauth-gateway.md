@@ -60,9 +60,16 @@ A release is not complete until:
 - production smoke tests confirm expected deployment SHA and D1 migrations, without printing secrets;
 - any unsupported registration method fails with an actionable error and no unsafe fallback.
 
-## Current known gap at the time of writing
+## Implementation status (v0.5.0)
 
-The current generic connector implementation supports Streamable HTTP and an OAuth flow based on discovered metadata plus dynamic client registration. It does not yet expose an owner-configurable pre-registered OAuth client, and its UI describes DCR as a requirement. That makes it less interoperable than the target design. CIMD support must be verified against the installed MCP SDK before claiming compatibility; implement or upgrade the client registration path and add tests before advertising it.
+Implemented on `main` (see `src/worker/connector/oauth.ts`, `routes.ts`, `service.ts`, migration `0004`):
+- Discovery via RFC 9728 (WWW-Authenticate `resource_metadata` or well-known), RFC 8414 and OIDC; issuer and resource binding verified; PKCE S256 mandatory; every metadata URL passes the SSRF guard.
+- Registration strategies: CIMD, DCR (cached), pre-registered (`none`, `client_secret_basic`, `client_secret_post`). No silent downgrade; actionable per-stage errors.
+- Hashed, session-bound, single-use, 10-minute state; exact redirect URI; RFC 9207 `iss` check; tokens/secrets/client config encrypted; refresh with rotation; reauth on refresh failure; credentials injected only to the endpoint host.
+- UI: "Recommended: Sign in with OAuth" / "Use a pre-registered OAuth app", Check OAuth diagnostics, stage panel, re-authorize/revoke/test/rediscover/approve/audit.
+- Tests: `tests/oauth-gateway.test.ts` (unit, fake network) and `scripts/gateway-smoke.sh` (E2E against three local mock authorization servers).
+
+Not yet verified: a **real third-party provider** end-to-end (requires the owner's account/credentials). Production verification used a temporary mock provider worker only; the gateway is therefore not marked "production-verified against a real provider".
 
 ## Suggested implementation order
 

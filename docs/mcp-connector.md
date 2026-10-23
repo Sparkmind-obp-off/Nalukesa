@@ -1,6 +1,6 @@
 # NALUKESA — Generic External MCP Connector (outbound)
 
-Status: implemented in v0.4.0 on `main`. With this connector NALUKESA can connect to any **standard MCP server over Streamable HTTP**. No provider-specific code is needed.
+Status: implemented in v0.4.0 on `main`; universal OAuth gateway added in v0.5.0 (see [universal-mcp-oauth-gateway.md](universal-mcp-oauth-gateway.md)). With this connector NALUKESA can connect to any **standard MCP server over Streamable HTTP**. No provider-specific code is needed.
 
 ## Lifecycle
 1. **Register** (owner UI → MCP & integrations → *Add connection*):
@@ -73,12 +73,30 @@ Recursion guard:
 |---|---|
 | Streamable HTTP (JSON and SSE responses, session id handled by the SDK) | ✅ |
 | Auth: none, bearer/API key in `Authorization` | ✅ |
-| Auth: OAuth 2.1 with discovery + dynamic client registration + PKCE + refresh | ✅ (tested against a local OAuth mock) |
-| OAuth with **pre-registered** client id/secret (no DCR) | ❌ not yet |
+| OAuth discovery: RFC 9728 protected-resource metadata (WWW-Authenticate hint or well-known), RFC 8414 and OIDC (path-insertion + path-append), issuer + resource binding checks, PKCE S256 mandatory | ✅ |
+| OAuth registration: **Client ID Metadata Document** (CIMD, `/oauth/client-metadata.json`) | ✅ tested against local mock AS + temporary production mock |
+| OAuth registration: **Dynamic Client Registration** (RFC 7591, cached per redirect/issuer) | ✅ tested against local mock AS + temporary production mock |
+| OAuth registration: **pre-registered** client (public `none`, `client_secret_basic`, `client_secret_post`; secret encrypted) | ✅ tested against local mock AS + temporary production mock |
+| Session-bound, single-use, 10-minute, hashed `state`; RFC 9207 `iss` check; refresh with rotation; reauth on refresh failure | ✅ |
+| Real third-party OAuth provider verified end-to-end | ❌ not yet (no owner credentials for a real provider) |
 | Custom header names (e.g. `X-API-Key`) | ❌ not yet |
 | Legacy HTTP+SSE transport | ❌ (deprecated) |
 | stdio transport | ❌ (impossible from a Worker) |
 | Resources / prompts / sampling from remote servers | ❌ tools only |
+
+## OAuth gateway (v0.5.0)
+Per connection, `auth_type: "oauth"` offers two modes:
+- **Recommended: Sign in with OAuth** (`oauth_mode: "auto"`): NALUKESA discovers the provider metadata and picks CIMD if the AS advertises `client_id_metadata_document_supported`, otherwise DCR. If neither is available it stops with an actionable error (`Provider requires a pre-registered client …`), never downgrading security.
+- **Use a pre-registered OAuth app** (`oauth_mode: "preregistered"`): `oauth_client_id`, `oauth_token_auth_method` (`none` | `client_secret_basic` | `client_secret_post`), optional `oauth_client_secret` (write-only, AES-GCM encrypted, never returned), optional `oauth_scopes`.
+
+Endpoints (owner session):
+- `GET /api/connector/oauth/client-info`: redirect URI + CIMD URL to paste into a provider console.
+- `POST /api/connector/connections/:id/oauth/diagnose`: staged discovery report without starting a flow.
+- `POST /api/connector/connections/:id/oauth/start`: returns `authorization_url`; on failure 422 `{stage, message, next_action}`.
+- `GET /api/connector/oauth/callback`: state checked (hash, session, TTL, single use), `iss` verified, code exchanged; page states that authorization alone does not prove data access.
+- `GET /oauth/client-metadata.json`: public CIMD document (HTTPS origins only).
+
+Stages shown in the UI and API (`stages` on each connection): endpoint reachable → OAuth configured → account authorized → MCP initialized → tools discovered → tool invocation verified. **Ready** only after the last one passes.
 
 ## Security
 See [mcp-security.md](mcp-security.md#generic-external-connector).

@@ -15,7 +15,7 @@ import { PLATFORMS, LANE_STATUS } from '../../shared/entities'
 import type { McpScope, TokenRecord } from './tokens'
 import { listConnections, listTools as listConnTools, invokeTool } from '../connector/service'
 
-export const SERVER_INFO = { name: 'nalukesa', version: '0.4.0' }
+export const SERVER_INFO = { name: 'nalukesa', version: '0.5.0' }
 const DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD')
 const ID = z.number().int().positive().max(2 ** 31)
 

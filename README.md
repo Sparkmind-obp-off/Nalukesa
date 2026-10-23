@@ -7,18 +7,18 @@ NALUKESA is the umbrella brand and private operating workspace for discovering, 
 
 NALUKESA is **not a marketplace**. No inventory, cart, checkout, payments, or seller onboarding.
 
-## Status — v0.4.0 (private pilot)
+## Status — v0.5.0 (private pilot)
 | Item | Status |
 |---|---|
 | Production URL | https://nalukesa.pages.dev (owner login required) |
 | Hosting | Cloudflare Pages project `nalukesa` (owner's own Cloudflare account) |
-| Database | Cloudflare D1 `nalukesa-production`, migration `0001` applied. **Contains no data**: no research records exist yet |
+| Database | Cloudflare D1 `nalukesa-production`, migrations `0001`–`0004` applied. **Contains no data**: no research records exist yet |
 | Auth | Owner-only password session. Secrets `OWNER_PASSWORD` and `SESSION_SECRET` are stored as Cloudflare Pages secrets |
 | Production URL (custom domain) | https://nalukesa.biz.id |
 | MCP server | `POST /mcp`: 5 read-only tools, scoped bearer tokens issued in the UI. See [docs/mcp-architecture.md](docs/mcp-architecture.md) |
-| External MCP connector | Generic: register any Streamable-HTTP MCP server (none/bearer/OAuth 2.1), discover tools, approve per tool, invoke. See [docs/mcp-connector.md](docs/mcp-connector.md). **No real third-party provider has been connected yet.** |
+| External MCP connector | Generic: register any Streamable-HTTP MCP server (none / bearer / OAuth 2.1 via CIMD, DCR or a pre-registered app), discover tools, approve per tool, invoke. See also [docs/universal-mcp-oauth-gateway.md](docs/universal-mcp-oauth-gateway.md). See [docs/mcp-connector.md](docs/mcp-connector.md). **No real third-party provider has been connected yet.** |
 | Integrations | None connected (Shopee/TikTok: manual entry and CSV only; AI: disabled) |
-| Checks | `npm run check`: typecheck ✓, lint ✓, 120/120 tests ✓, build ✓ · `smoke.sh` 34/34 · `mcp-smoke.sh` 57/57 · `connector-smoke.sh` 129/129 (local D1 + mock MCP) |
+| Checks | `npm run check`: typecheck ✓, lint ✓, 156/156 tests ✓, build ✓ · `smoke.sh` 34/34 · `mcp-smoke.sh` 57/57 · `connector-smoke.sh` 129/129 · `gateway-smoke.sh` 102/102 (local D1 + mock MCP/AS) |
 
 ## Features (implemented and verified)
 - **Overview:** counts and next actions computed only from stored records. It flags stale offers (>30 days), reviews due, experiments without a decision, and published content without performance data. Outcome totals only include snapshots that actually recorded the metric.
@@ -90,4 +90,4 @@ Back up the database with `npx wrangler d1 export nalukesa-production --remote -
 ## Documentation
 [Brand architecture](docs/brand-architecture.md) · [Niche validation](docs/niche-validation.md) · [Product intelligence](docs/product-intelligence.md) · [Content playbook](docs/content-playbook.md) · [Metrics & decisions](docs/metrics-and-decisions.md) · [Technical architecture](docs/technical-architecture.md) · [Full-stack blueprint](docs/full-stack-blueprint.md) · [Roadmap](docs/roadmap.md) · [Implementation backlog](docs/implementation-backlog.md) · [Acceptance criteria](docs/acceptance-criteria.md) · [Compliance & trust](docs/compliance-and-trust.md) · [Genspark master prompt](docs/master-system-prompt-genspark.md)
 
-_Last updated: 2026-10-23 (v0.4.0)_
+_Last updated: 2026-10-23 (v0.5.0)_

@@ -61,6 +61,14 @@ Priorities: **P0** blocks foundation, **P1** core workflow, **P2** persistence/s
 - [ ] Real provider integration (needs eligibility, terms, credentials and owner approval).
 - [ ] Atomic/global rate limiting (current: best-effort D1 fixed window).
 
+## Universal MCP OAuth gateway (v0.5.0, main)
+- [x] RFC 9728 / RFC 8414 / OIDC discovery with issuer/resource/S256 checks and SSRF validation of every URL.
+- [x] Registration strategies: CIMD, DCR (cached), pre-registered (none / basic / post) with encrypted secret.
+- [x] Session-bound single-use hashed state, `iss` check, refresh rotation, reauth on failure, endpoint-only token injection.
+- [x] Staged diagnostics + UI (Recommended / pre-registered, stages, Check OAuth, Re-authorize).
+- [x] Unit tests (35) + gateway E2E smoke (102).
+- [ ] Real third-party provider verified end-to-end (blocked: needs owner account/credentials).
+
 ## Generic external MCP connector (v0.4.0, main)
 - [x] Connection registry in D1 (migration 0003), with credentials encrypted using AES-256-GCM (key held in a Cloudflare secret).
 - [x] Streamable HTTP client via the official SDK: initialize, paginated tools/list, tools/call, session cleanup.
@@ -70,7 +78,8 @@ Priorities: **P0** blocks foundation, **P1** core workflow, **P2** persistence/s
 - [x] Schema-validated invocation, normalized and redacted results with provenance, invocation log and audit trail.
 - [x] Inbound bridge tools (read-only external tools only) and recursion guard.
 - [x] Owner UI for connection management.
-- [ ] OAuth with pre-registered clients (no DCR); custom auth header names.
+- [x] OAuth with pre-registered clients (v0.5.0).
+- [ ] Custom auth header names.
 - [ ] First real third-party provider (needs the owner's account and credentials).
 
 ## P4 — Research integrations (conditional)

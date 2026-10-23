@@ -61,7 +61,7 @@ const MAX_TOOLS = 200
 const MAX_PAGES = 10
 
 export async function withSession<T>(url: URL, guard: GuardOptions, fn: (c: Client, info: SessionInfo) => Promise<T>): Promise<T> {
-  const client = new Client({ name: 'nalukesa-connector', version: '0.4.0' }, { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() })
+  const client = new Client({ name: 'nalukesa-connector', version: '0.5.0' }, { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() })
   const transport = new StreamableHTTPClientTransport(url, { fetch: guardedFetch(guard) })
   // Hard ceiling over the whole operation, independent of per-request deadlines
   let timer: ReturnType<typeof setTimeout> | undefined
