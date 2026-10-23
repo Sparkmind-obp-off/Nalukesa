@@ -1,6 +1,6 @@
 {
   "name": "nalukesa",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "NALUKESA — Affiliate Discovery & Intelligence Hub",
   "directories": {
     "doc": "docs"
@@ -27,6 +27,8 @@
   },
   "homepage": "https://github.com/Sparkmind-obp-off/Nalukesa#readme",
   "dependencies": {
+    "@cfworker/json-schema": "^4.1.1",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "hono": "^4.13.13",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
