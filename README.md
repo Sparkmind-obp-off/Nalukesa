@@ -1,62 +1,86 @@
 # NALUKESA
 ### Affiliate Discovery & Intelligence Hub
 
-NALUKESA is the umbrella brand and operating system for discovering, researching, testing, and scaling affiliate opportunities across multiple niches. It connects a central intelligence hub with niche-specific content identities and experiments.
+NALUKESA is the umbrella brand and private operating workspace for discovering, researching, testing, and scaling affiliate opportunities across niches.
 
 **Core idea:** discover evidence → run small tests → measure real outcomes → scale only what earns the right to scale.
 
-## What this repository contains
-- A premium, responsive web workspace prototype in `index.html`
-- Brand vision, mission, architecture, and visual design rules
-- A repeatable niche and product research methodology
-- Experiment, content, measurement, and decision playbooks
-- Technical architecture and a staged roadmap
+NALUKESA is **not a marketplace**. No inventory, cart, checkout, payments, or seller onboarding.
 
-## Product stance
-NALUKESA is **not initially a marketplace**. It is an internal-first discovery and validation hub with a public-facing brand layer. It may later publish curated affiliate discovery pages, but checkout, inventory, payments, and marketplace operations are explicitly out of scope until evidence justifies them.
+## Status — v0.2.0 (private pilot)
+| Item | Status |
+|---|---|
+| Production URL | https://nalukesa.pages.dev (owner login required) |
+| Hosting | Cloudflare Pages project `nalukesa` (owner's own Cloudflare account) |
+| Database | Cloudflare D1 `nalukesa-production`, migration `0001` applied. **Contains no data**: no research records exist yet |
+| Auth | Owner-only password session. Secrets `OWNER_PASSWORD` and `SESSION_SECRET` are stored as Cloudflare Pages secrets |
+| Integrations | None connected (Shopee/TikTok: manual entry and CSV only; AI: disabled) |
+| Checks | `npm run check`: typecheck ✓, lint ✓, 19/19 unit tests ✓, build ✓ · `scripts/smoke.sh`: 34/34 API checks ✓ (local D1) |
 
-## Working principles
-1. Evidence before assumptions.
-2. No fabricated demand, sales, commission, or performance.
-3. Rp0-first validation; no paid tools or ads required for the first experiment.
-4. Each niche is a separate experiment; the umbrella brand remains coherent.
-5. Track clicks, orders, approved commissions, cancellations, and time—not views alone.
-6. Be transparent about affiliate links and product limitations.
-7. Respect platform policies, intellectual property, and privacy.
+## Features (implemented and verified)
+- **Overview:** counts and next actions computed only from stored records. It flags stale offers (>30 days), reviews due, experiments without a decision, and published content without performance data. Outcome totals only include snapshots that actually recorded the metric.
+- **Niches:** hypotheses with audience, problem, confidence, status (Hypothesis → Rejected) and next review date.
+- **Products:** exact listing URL, platform, seller, checked date, trust notes.
+- **Offer snapshots (append-only):** price in integer IDR, *advertised* commission %, basis, terms URL, recheck date. History is never overwritten.
+- **Evidence sources:** URL, publisher, accessed date, grade A/B/C/D, caveats. Stale after 90 days.
+- **Observations:** the observed fact is kept separate from its interpretation, linked to a source, with confidence.
+- **Experiments:** hypothesis, scope, dates, primary metric, time and budget caps, and a decision rule that must be registered before launch.
+- **Content studio:** angle, verified proof point, caveats, CTA, disclosure, asset rights. A draft brief is generated only from the stored fields (no AI). A record cannot be marked *Published* until disclosure and rights are resolved.
+- **Performance snapshots (append-only):** views, clicks, orders, *approved* commission, cancellations/returns, data source. A blank field means **not recorded**, never zero.
+- **Decision log (append-only):** scale candidate / iterate / hold / stop, with rationale, evidence refs, owner and review date. Each record's detail page shows its decision history.
+- **CSV:** export every entity. Import works as validate → preview with row-level errors → confirm. The import is atomic: one bad row aborts everything.
+- **Settings:** live health check, enforced guardrails, integration status, audit log.
+- **Security:** see `docs/technical-architecture.md`. In short: auth on every private endpoint, input validation, http(s)-only URLs, body limits, login throttling, CSP and security headers, `noindex`.
 
-## Start here
-1. Open `index.html` locally or deploy this repository as a static Cloudflare Pages site.
-2. Read [brand architecture](docs/brand-architecture.md).
-3. Follow [niche validation](docs/niche-validation.md).
-4. Record findings using [product intelligence](docs/product-intelligence.md).
-5. Make decisions using [metrics and decision rules](docs/metrics-and-decisions.md).
+## Using the workspace
+1. Open https://nalukesa.pages.dev and sign in with the owner password.
+2. Follow the **Research workflow** on the Overview. It points to the next empty step.
+3. Register the three initial lanes (Beauty & personal care, Everyday fashion, Useful home goods) as **Hypothesis**. They are not proven winners.
+4. For each claim, add an evidence source first, then observations, products, and dated offer snapshots.
+5. Before publishing anything, plan one bounded experiment per lane with a written decision rule.
+6. Record real numbers from platform dashboards as performance snapshots, then log a decision.
 
-## Status
-**Blueprint + interactive frontend prototype.** This repository does not yet contain verified live affiliate API integrations, account analytics integrations, or real performance data. The interface uses clearly labelled illustrative/sample states until connected to real sources.
+## Project structure
+```
+src/shared/      entities.ts (single source of truth), validate.ts, csv.ts
+src/worker/      Hono API (index.ts) + owner auth (auth.ts) → dist/_worker.js
+web/             React + Vite SPA (index.html, src/, public/_headers)
+migrations/      D1 SQL migrations
+tests/           Vitest unit tests
+scripts/         build-worker.mjs, smoke.sh (API integration checks)
+legacy/          original static prototype (not deployed)
+docs/            brand, methodology, architecture, backlog, acceptance criteria
+```
 
-## Initial test lanes
-- Beauty & personal care
-- Everyday fashion
-- Useful home goods
+## Development
+```bash
+npm install
+cp .env.example .dev.vars            # fill OWNER_PASSWORD and SESSION_SECRET (>=32 chars)
+npm run db:migrate:local
+npm run build && pm2 start ecosystem.config.cjs   # http://localhost:3000
+npm run check                         # typecheck + lint + tests + build
+PW=<local password> bash scripts/smoke.sh   # writes test rows: local DB only
+```
 
-These are hypotheses to test, not proven winners. Selection must be revisited using current platform access, eligibility, product-level evidence, and measured results.
+## Deploy (Cloudflare Pages, own account)
+```bash
+npm run db:migrate:prod      # only when there are new migrations
+npm run deploy               # build + wrangler pages deploy
+```
+Rotate the password with `npx wrangler pages secret put OWNER_PASSWORD --project-name nalukesa`, then redeploy.
+Back up the database with `npx wrangler d1 export nalukesa-production --remote --output backup.sql`.
 
-## Deployment
-For a zero-build static prototype, set the Cloudflare Pages build command to blank and the output directory to `/` (or the repository root). No secrets or backend are needed for the prototype. See [technical architecture](docs/technical-architecture.md) before adding real accounts or data storage.
+## Not yet implemented
+- Cloudflare Access (Zero Trust) as an extra layer. It is recommended, and is configured in the dashboard.
+- Global cross-entity search, duplicate-listing detection, and bulk delete/export-all.
+- Rate limiting beyond login. An automated a11y audit with assistive tech. CI pipeline.
+- Official platform integrations (M6) and the AI assistant (M7). Both are deliberately out of scope until justified.
+- Public discovery pages (M7). There will be no checkout.
 
+## Next recommended milestone
+**M5 — Real-world validation:** use the workspace for manual research on the three lanes. Record dated evidence and one bounded experiment per lane, then compare the recorded figures against the source dashboards. Fix any workflow friction found before adding integrations.
 
-## Full-stack and Genspark build pack
+## Documentation
+[Brand architecture](docs/brand-architecture.md) · [Niche validation](docs/niche-validation.md) · [Product intelligence](docs/product-intelligence.md) · [Content playbook](docs/content-playbook.md) · [Metrics & decisions](docs/metrics-and-decisions.md) · [Technical architecture](docs/technical-architecture.md) · [Full-stack blueprint](docs/full-stack-blueprint.md) · [Roadmap](docs/roadmap.md) · [Implementation backlog](docs/implementation-backlog.md) · [Acceptance criteria](docs/acceptance-criteria.md) · [Compliance & trust](docs/compliance-and-trust.md) · [Genspark master prompt](docs/master-system-prompt-genspark.md)
 
-- [Full-stack blueprint](docs/full-stack-blueprint.md) — recommended stack, architecture, data model, API outline, security, and delivery phases.
-- [Implementation backlog](docs/implementation-backlog.md) — prioritized engineering work.
-- [Acceptance criteria](docs/acceptance-criteria.md) — QA, security, data integrity, and release gates.
-- [Genspark master system prompt](docs/master-system-prompt-genspark.md) — copy-ready project instruction for Genspark Super Agent.
-- [Genspark execution checklist](docs/genspark-execution-checklist.md) — safe handoff and verification process.
-
-## Recommended technical direction
-
-React + TypeScript + Vite, Cloudflare Pages, Cloudflare Workers API, and Cloudflare D1; R2 is optional. Use owner-only access for the private pilot and CSV/manual research before official integrations. This is a proposal, not a claim that these services are connected or deployed.
-
-## Genspark handoff
-
-Paste the master prompt into your Genspark project, provide the repository and docs, and require an audit before changes. The prompt is ready to use, but no Genspark task is claimed to have been submitted or run from this repository update.
+_Last updated: 2026-10-23_
