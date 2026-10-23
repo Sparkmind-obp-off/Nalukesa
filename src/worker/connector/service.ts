@@ -5,9 +5,9 @@
  */
 import { Validator } from '@cfworker/json-schema'
 import { sealJson, openJson, CryptoUnavailable } from './crypto'
-import { validateEndpoint, type NetPolicy, type Resolver, type FetchLike } from './net'
+import { validateEndpoint, hostKeyOf, type NetPolicy, type Resolver, type FetchLike } from './net'
 import { withSession, listAllTools, callRemoteTool, classify, ConnectorError, type RemoteTool } from './client'
-import { refreshOAuth, type OAuthCredential } from './oauth'
+import { refreshOAuth, type OAuthCredential, type PreregisteredClient, type TokenAuthMethod } from './oauth'
 import { redact } from '../hub/safety'
 import { sha256 } from '../auth'
 
@@ -53,6 +53,16 @@ export interface ConnectionRow {
   last_error: string | null
   created_at: string
   updated_at: string
+  oauth_mode: 'auto' | 'preregistered'
+  oauth_client_id: string | null
+  oauth_token_auth_method: TokenAuthMethod | null
+  oauth_scopes: string | null
+  oauth_client_ciphertext: string | null
+  oauth_strategy: string | null
+  oauth_diagnostics: string | null
+  oauth_authorized_at: string | null
+  oauth_token_expires_at: string | null
+  oauth_last_refresh_at: string | null
 }
 
 export class ServiceError extends Error {
@@ -62,6 +72,7 @@ export class ServiceError extends Error {
 }
 
 const AUTH_PURPOSE = (id: number) => `mcp-connection-auth:${id}`
+const CLIENT_PURPOSE = (id: number) => `mcp-connection-oauth-client:${id}`
 const MAX_ARG_BYTES = 32 * 1024
 const PREVIEW_BYTES = 4000
 const NOW = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
@@ -72,8 +83,40 @@ export function allowLocal(env: ConnectorEnv) {
 
 /** Public projection — never includes ciphertext. */
 export function publicConnection(c: ConnectionRow) {
-  const { auth_ciphertext, ...rest } = c
-  return { ...rest, enabled: !!c.enabled, has_credential: !!auth_ciphertext, extra_allowed_hosts: c.extra_allowed_hosts?.split(' ').filter(Boolean) ?? [] }
+  const { auth_ciphertext, oauth_client_ciphertext, oauth_diagnostics, ...rest } = c
+  let diagnostics: unknown = null
+  try {
+    diagnostics = oauth_diagnostics ? JSON.parse(oauth_diagnostics) : null
+  } catch {
+    diagnostics = null
+  }
+  return {
+    ...rest,
+    enabled: !!c.enabled,
+    has_credential: !!auth_ciphertext,
+    has_client_secret: !!oauth_client_ciphertext && c.oauth_mode === 'preregistered',
+    oauth_diagnostics: diagnostics,
+    extra_allowed_hosts: c.extra_allowed_hosts?.split(' ').filter(Boolean) ?? [],
+    stages: stages(c),
+  }
+}
+
+/** Distinct, honest per-stage status for the UI. */
+export function stages(c: Pick<ConnectionRow, 'auth_type' | 'auth_ciphertext' | 'status' | 'last_check_at' | 'tools_refreshed_at' | 'last_verified_at' | 'oauth_authorized_at' | 'oauth_diagnostics' | 'oauth_mode' | 'oauth_client_id'>) {
+  let diag: { stage_reached?: string; selected?: string | null } | null = null
+  try {
+    diag = c.oauth_diagnostics ? JSON.parse(c.oauth_diagnostics) : null
+  } catch {
+    diag = null
+  }
+  return {
+    endpoint_reachable: c.status === 'failed' ? 'failed' : c.last_check_at ? 'ok' : 'unknown',
+    oauth_configured: c.auth_type !== 'oauth' ? 'n/a' : c.oauth_mode === 'preregistered' ? (c.oauth_client_id ? 'ok' : 'missing_client_id') : diag?.stage_reached === 'ready' ? 'ok' : diag ? 'failed' : 'unknown',
+    account_authorized: c.auth_type === 'none' ? 'n/a' : c.auth_ciphertext ? (c.status === 'auth_failed' || c.status === 'auth_required' ? 'failed' : 'ok') : 'missing',
+    mcp_initialized: c.tools_refreshed_at && (c.status === 'connected' || c.status === 'verified') ? 'ok' : c.status === 'failed' ? 'failed' : 'unknown',
+    tools_discovered: c.tools_refreshed_at ? 'ok' : 'unknown',
+    invocation_verified: c.last_verified_at && c.status === 'verified' ? 'ok' : 'unknown',
+  }
 }
 
 export function riskOf(t: Pick<RemoteTool, 'annotations'>): Risk {
@@ -81,6 +124,10 @@ export function riskOf(t: Pick<RemoteTool, 'annotations'>): Risk {
   if (a.destructiveHint === true) return 'destructive'
   if (a.readOnlyHint === true) return 'read'
   return 'write' // per MCP spec, absent hints must be treated as potentially mutating
+}
+
+function endpointHostKey(c: Pick<ConnectionRow, 'endpoint_url'>, env: ConnectorEnv) {
+  return hostKeyOf(new URL(c.endpoint_url), allowLocal(env))
 }
 
 function policyFor(c: Pick<ConnectionRow, 'endpoint_url' | 'extra_allowed_hosts'>, env: ConnectorEnv, deps: ConnectorDeps): NetPolicy {
@@ -112,6 +159,12 @@ export interface ConnectionInput {
   max_response_bytes?: unknown
   calls_per_minute?: unknown
   enabled?: unknown
+  oauth_mode?: unknown
+  oauth_client_id?: unknown
+  oauth_client_secret?: unknown
+  oauth_token_auth_method?: unknown
+  oauth_scopes?: unknown
+  clear_oauth_client_secret?: unknown
 }
 
 function intIn(v: unknown, lo: number, hi: number, field: string, errs: { field: string; message: string }[]): number | undefined {
@@ -126,7 +179,7 @@ function intIn(v: unknown, lo: number, hi: number, field: string, errs: { field:
 export function validateConnectionInput(input: ConnectionInput, mode: 'create' | 'update', env: ConnectorEnv, deps: ConnectorDeps = {}) {
   const errs: { field: string; message: string }[] = []
   const out: Record<string, unknown> = {}
-  const allowed = new Set(['name', 'endpoint_url', 'auth_type', 'bearer_token', 'timeout_ms', 'max_response_bytes', 'calls_per_minute', 'enabled'])
+  const allowed = new Set(['name', 'endpoint_url', 'auth_type', 'bearer_token', 'timeout_ms', 'max_response_bytes', 'calls_per_minute', 'enabled', 'oauth_mode', 'oauth_client_id', 'oauth_client_secret', 'oauth_token_auth_method', 'oauth_scopes', 'clear_oauth_client_secret'])
   for (const k of Object.keys(input ?? {})) if (!allowed.has(k)) errs.push({ field: k, message: 'Unknown field' })
   if (mode === 'create' || input.name !== undefined) {
     const n = typeof input.name === 'string' ? input.name.trim() : ''
@@ -162,6 +215,35 @@ export function validateConnectionInput(input: ConnectionInput, mode: 'create' |
     if (typeof input.enabled !== 'boolean') errs.push({ field: 'enabled', message: 'Boolean' })
     else out.enabled = input.enabled ? 1 : 0
   }
+  if (input.oauth_mode !== undefined) {
+    if (input.oauth_mode !== 'auto' && input.oauth_mode !== 'preregistered') errs.push({ field: 'oauth_mode', message: 'auto or preregistered' })
+    else out.oauth_mode = input.oauth_mode
+  }
+  if (input.oauth_client_id !== undefined) {
+    if (input.oauth_client_id === null || input.oauth_client_id === '') out.oauth_client_id = null
+    else if (typeof input.oauth_client_id !== 'string' || !/^[\x21-\x7e]{1,512}$/.test(input.oauth_client_id)) errs.push({ field: 'oauth_client_id', message: '1–512 printable characters' })
+    else out.oauth_client_id = input.oauth_client_id
+  }
+  if (input.oauth_client_secret !== undefined && input.oauth_client_secret !== '') {
+    if (typeof input.oauth_client_secret !== 'string' || !/^[\x21-\x7e]{1,2048}$/.test(input.oauth_client_secret)) errs.push({ field: 'oauth_client_secret', message: '1–2048 printable characters' })
+    else out.oauth_client_secret = input.oauth_client_secret
+  }
+  if (input.oauth_token_auth_method !== undefined && input.oauth_token_auth_method !== null && input.oauth_token_auth_method !== '') {
+    if (!['none', 'client_secret_basic', 'client_secret_post'].includes(String(input.oauth_token_auth_method))) errs.push({ field: 'oauth_token_auth_method', message: 'none, client_secret_basic or client_secret_post' })
+    else out.oauth_token_auth_method = input.oauth_token_auth_method
+  } else if (input.oauth_token_auth_method === null || input.oauth_token_auth_method === '') out.oauth_token_auth_method = null
+  if (input.oauth_scopes !== undefined) {
+    if (input.oauth_scopes === null || input.oauth_scopes === '') out.oauth_scopes = null
+    else if (typeof input.oauth_scopes !== 'string' || !/^[\x21\x23-\x5b\x5d-\x7e ]{1,500}$/.test(input.oauth_scopes)) errs.push({ field: 'oauth_scopes', message: 'Space-separated scope tokens, max 500 characters' })
+    else out.oauth_scopes = input.oauth_scopes.trim().replace(/\s+/g, ' ')
+  }
+  if (input.clear_oauth_client_secret !== undefined) {
+    if (typeof input.clear_oauth_client_secret !== 'boolean') errs.push({ field: 'clear_oauth_client_secret', message: 'Boolean' })
+    else if (input.clear_oauth_client_secret) out.clear_oauth_client_secret = true
+  }
+  const finalAuth = out.auth_type
+  if (mode === 'create' && finalAuth === 'oauth' && out.oauth_mode === 'preregistered' && !out.oauth_client_id) errs.push({ field: 'oauth_client_id', message: 'Required for a pre-registered OAuth app' })
+  if (out.oauth_token_auth_method && out.oauth_token_auth_method !== 'none' && mode === 'create' && !out.oauth_client_secret) errs.push({ field: 'oauth_client_secret', message: 'Required for client_secret_basic / client_secret_post' })
   if (mode === 'update' && !Object.keys(out).length && !errs.length) errs.push({ field: '_', message: 'No fields to update' })
   if (errs.length) throw new ServiceError(400, 'Validation failed', errs)
   return out
@@ -177,8 +259,9 @@ export async function listConnections(db: D1Database) {
   return r.results.map((c) => ({ ...publicConnection(c), tools_total: map.get(c.id)?.total ?? 0, tools_allowed: map.get(c.id)?.allowed ?? 0, readiness: readiness(c, map.get(c.id)?.allowed ?? 0) }))
 }
 
-export function readiness(c: Pick<ConnectionRow, 'enabled' | 'status' | 'auth_type' | 'auth_ciphertext' | 'tools_refreshed_at'>, allowed: number): string {
+export function readiness(c: Pick<ConnectionRow, 'enabled' | 'status' | 'auth_type' | 'auth_ciphertext' | 'tools_refreshed_at'> & Partial<Pick<ConnectionRow, 'oauth_mode' | 'oauth_client_id'>>, allowed: number): string {
   if (!c.enabled) return 'disabled'
+  if (c.auth_type === 'oauth' && c.oauth_mode === 'preregistered' && !c.oauth_client_id) return 'not_configured'
   if (c.auth_type !== 'none' && !c.auth_ciphertext) return c.auth_type === 'oauth' ? 'auth_required' : 'not_configured'
   if (c.status === 'untested') return 'untested'
   if (c.status === 'failed') return 'connection_failed'
@@ -201,18 +284,28 @@ function hint(secret: string) {
 export async function createConnection(env: ConnectorEnv, input: ConnectionInput, deps: ConnectorDeps = {}) {
   const v = validateConnectionInput(input, 'create', env, deps)
   if (v.auth_type !== 'none' && !env.CONNECTOR_ENC_KEY) throw new ServiceError(503, 'CONNECTOR_ENC_KEY is not configured; credentials cannot be stored safely')
+  const isOAuth = v.auth_type === 'oauth'
   const row = await env.DB.prepare(
-    `INSERT INTO mcp_connections (name, endpoint_url, auth_type, timeout_ms, max_response_bytes, calls_per_minute, enabled)
-     VALUES (?,?,?,?,?,?,?) RETURNING *`,
+    `INSERT INTO mcp_connections (name, endpoint_url, auth_type, timeout_ms, max_response_bytes, calls_per_minute, enabled, oauth_mode, oauth_client_id, oauth_token_auth_method, oauth_scopes)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?) RETURNING *`,
   )
-    .bind(v.name, v.endpoint_url, v.auth_type, v.timeout_ms ?? 15000, v.max_response_bytes ?? 1048576, v.calls_per_minute ?? 30, v.enabled ?? 1)
+    .bind(
+      v.name, v.endpoint_url, v.auth_type, v.timeout_ms ?? 15000, v.max_response_bytes ?? 1048576, v.calls_per_minute ?? 30, v.enabled ?? 1,
+      isOAuth ? (v.oauth_mode ?? 'auto') : 'auto',
+      isOAuth && v.oauth_mode === 'preregistered' ? (v.oauth_client_id ?? null) : null,
+      isOAuth && v.oauth_mode === 'preregistered' ? (v.oauth_token_auth_method ?? null) : null,
+      isOAuth ? (v.oauth_scopes ?? null) : null,
+    )
     .first<ConnectionRow>()
   if (!row) throw new ServiceError(502, 'Insert failed')
   if (v.auth_type === 'bearer' && typeof v.bearer_token === 'string') {
     const ct = await sealJson(env.CONNECTOR_ENC_KEY, AUTH_PURPOSE(row.id), { type: 'bearer', token: v.bearer_token })
     await env.DB.prepare('UPDATE mcp_connections SET auth_ciphertext = ?, auth_hint = ? WHERE id = ?').bind(ct, hint(v.bearer_token), row.id).run()
   }
-  await audit(env.DB, 'connector_create', row.id, { name: v.name, host: new URL(String(v.endpoint_url)).host, auth_type: v.auth_type })
+  if (isOAuth && v.oauth_mode === 'preregistered' && typeof v.oauth_client_secret === 'string') {
+    await writeClientBlob(env, row.id, { client_secret: v.oauth_client_secret })
+  }
+  await audit(env.DB, 'connector_create', row.id, { name: v.name, host: new URL(String(v.endpoint_url)).host, auth_type: v.auth_type, oauth_mode: isOAuth ? (v.oauth_mode ?? 'auto') : undefined })
   return publicConnection(await getConnection(env.DB, row.id))
 }
 
@@ -223,7 +316,32 @@ export async function updateConnection(env: ConnectorEnv, id: number, input: Con
   const binds: unknown[] = []
   const endpointChanged = typeof v.endpoint_url === 'string' && v.endpoint_url !== existing.endpoint_url
   const authChanged = v.auth_type !== undefined && v.auth_type !== existing.auth_type
-  for (const k of ['name', 'endpoint_url', 'auth_type', 'timeout_ms', 'max_response_bytes', 'calls_per_minute', 'enabled'] as const) {
+  const oauthClientChanged = (v.oauth_mode !== undefined && v.oauth_mode !== existing.oauth_mode) || (v.oauth_client_id !== undefined && v.oauth_client_id !== existing.oauth_client_id) || v.oauth_client_secret !== undefined || v.clear_oauth_client_secret === true
+  if (oauthClientChanged) {
+    // a different OAuth client must re-authorize; old tokens were issued to the old client
+    sets.push('auth_ciphertext = NULL', 'auth_hint = NULL', `status = 'untested'`, 'oauth_authorized_at = NULL', 'oauth_token_expires_at = NULL')
+  }
+  {
+    // Compute the final encrypted client blob from the existing one in a single step
+    const blob = await readClientBlob(env, existing)
+    let changed = false
+    if ((v.oauth_mode !== undefined && v.oauth_mode !== existing.oauth_mode) || (v.endpoint_url && v.endpoint_url !== existing.endpoint_url)) {
+      if (blob.dcr) {
+        delete blob.dcr // cached DCR registration belongs to the old strategy / destination
+        changed = true
+      }
+    }
+    if (v.oauth_client_secret !== undefined) {
+      if (!env.CONNECTOR_ENC_KEY) throw new ServiceError(503, 'CONNECTOR_ENC_KEY is not configured')
+      blob.client_secret = String(v.oauth_client_secret)
+      changed = true
+    } else if (v.clear_oauth_client_secret === true && blob.client_secret) {
+      delete blob.client_secret
+      changed = true
+    }
+    if (changed) await writeClientBlob(env, id, blob)
+  }
+  for (const k of ['name', 'endpoint_url', 'auth_type', 'timeout_ms', 'max_response_bytes', 'calls_per_minute', 'enabled', 'oauth_mode', 'oauth_client_id', 'oauth_token_auth_method', 'oauth_scopes'] as const) {
     if (v[k] !== undefined) {
       sets.push(`${k} = ?`)
       binds.push(v[k])
@@ -231,7 +349,7 @@ export async function updateConnection(env: ConnectorEnv, id: number, input: Con
   }
   if (endpointChanged || authChanged) {
     // a new destination or auth method must be re-verified, and must never receive the old credential
-    sets.push(`status = 'untested'`, `last_verified_at = NULL`, `extra_allowed_hosts = NULL`)
+    sets.push(`status = 'untested'`, `last_verified_at = NULL`, `extra_allowed_hosts = NULL`, 'oauth_diagnostics = NULL', 'oauth_strategy = NULL', 'oauth_authorized_at = NULL', 'oauth_token_expires_at = NULL')
     if (!v.bearer_token) sets.push('auth_ciphertext = NULL', 'auth_hint = NULL')
     await env.DB.prepare(`UPDATE mcp_connection_tools SET permission = 'denied' WHERE connection_id = ?`).bind(id).run()
   }
@@ -244,13 +362,13 @@ export async function updateConnection(env: ConnectorEnv, id: number, input: Con
   }
   sets.push(`updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`)
   await env.DB.prepare(`UPDATE mcp_connections SET ${sets.join(', ')} WHERE id = ?`).bind(...binds, id).run()
-  await audit(env.DB, 'connector_update', id, { fields: Object.keys(v).filter((k) => k !== 'bearer_token'), credential_rotated: !!v.bearer_token, reset_permissions: endpointChanged || authChanged })
+  await audit(env.DB, 'connector_update', id, { fields: Object.keys(v).filter((k) => k !== 'bearer_token' && k !== 'oauth_client_secret'), credential_rotated: !!v.bearer_token, client_secret_changed: v.oauth_client_secret !== undefined || v.clear_oauth_client_secret === true, reset_permissions: endpointChanged || authChanged })
   return publicConnection(await getConnection(env.DB, id))
 }
 
 export async function revokeCredential(env: ConnectorEnv, id: number) {
   await getConnection(env.DB, id)
-  await env.DB.prepare(`UPDATE mcp_connections SET auth_ciphertext = NULL, auth_hint = NULL, status = 'untested', last_verified_at = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?`).bind(id).run()
+  await env.DB.prepare(`UPDATE mcp_connections SET auth_ciphertext = NULL, auth_hint = NULL, status = 'untested', last_verified_at = NULL, oauth_authorized_at = NULL, oauth_token_expires_at = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?`).bind(id).run()
   await audit(env.DB, 'connector_revoke_credential', id, {})
   return publicConnection(await getConnection(env.DB, id))
 }
@@ -282,11 +400,17 @@ async function authHeaders(env: ConnectorEnv, c: ConnectionRow, deps: ConnectorD
     let oc = cred as OAuthCredential & { type: string }
     if (oc.expires_at && oc.expires_at - 60 < Date.now() / 1000) {
       try {
-        oc = { ...(await refreshOAuth(oc, policyFor(c, env, deps))), type: 'oauth' }
+        const prevRefresh = oc.refresh_token
+        oc = { ...(await refreshOAuth(oc, policyFor(c, env, deps), deps.fetchImpl)), type: 'oauth' }
         const ct = await sealJson(env.CONNECTOR_ENC_KEY, AUTH_PURPOSE(c.id), oc)
-        await env.DB.prepare('UPDATE mcp_connections SET auth_ciphertext = ? WHERE id = ?').bind(ct, c.id).run()
-        await audit(env.DB, 'connector_oauth_refresh', c.id, {})
+        c.auth_ciphertext = ct // keep the in-memory row current for any later read in this operation
+        await env.DB.prepare(`UPDATE mcp_connections SET auth_ciphertext = ?, oauth_token_expires_at = ?, oauth_last_refresh_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?`)
+          .bind(ct, oc.expires_at ? new Date(oc.expires_at * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z') : null, c.id)
+          .run()
+        await audit(env.DB, 'connector_oauth_refresh', c.id, { rotated: !!oc.refresh_token && oc.refresh_token !== prevRefresh })
       } catch {
+        await env.DB.prepare(`UPDATE mcp_connections SET status = 'auth_required', last_error = 'refresh: token refresh failed; re-authorize' WHERE id = ?`).bind(c.id).run()
+        await audit(env.DB, 'connector_oauth_refresh_failed', c.id, {})
         throw new ConnectorError('auth_required', 'OAuth token expired and could not be refreshed; re-authorize')
       }
     }
@@ -295,22 +419,37 @@ async function authHeaders(env: ConnectorEnv, c: ConnectionRow, deps: ConnectorD
   throw new ConnectorError('auth_failed', 'Unsupported stored credential')
 }
 
-async function secretsOf(env: ConnectorEnv, c: ConnectionRow): Promise<string[]> {
-  if (!c.auth_ciphertext || !env.CONNECTOR_ENC_KEY) return []
-  try {
-    const cred = await openJson<Record<string, unknown>>(env.CONNECTOR_ENC_KEY, AUTH_PURPOSE(c.id), c.auth_ciphertext)
-    return ['token', 'access_token', 'refresh_token'].map((k) => cred[k]).filter((x): x is string => typeof x === 'string')
-  } catch {
-    return []
+export async function secretsOf(env: ConnectorEnv, c: ConnectionRow): Promise<string[]> {
+  if (!env.CONNECTOR_ENC_KEY) return []
+  const out: string[] = []
+  if (c.auth_ciphertext) {
+    try {
+      const cred = await openJson<Record<string, unknown>>(env.CONNECTOR_ENC_KEY, AUTH_PURPOSE(c.id), c.auth_ciphertext)
+      for (const k of ['token', 'access_token', 'refresh_token']) if (typeof cred[k] === 'string') out.push(cred[k] as string)
+      const ci = cred.client_information as Record<string, unknown> | undefined
+      if (ci && typeof ci.client_secret === 'string') out.push(ci.client_secret)
+    } catch {
+      /* ignore */
+    }
   }
+  const blob = await readClientBlob(env, c)
+  if (blob.client_secret) out.push(blob.client_secret)
+  return out
 }
 
 function guard(env: ConnectorEnv, c: ConnectionRow, deps: ConnectorDeps) {
+  // One credential resolution per operation: a refresh (with rotation) must happen at most once,
+  // and every request in the same MCP session must reuse the refreshed token.
+  let cached: Promise<Record<string, string>> | null = null
   return {
     policy: policyFor(c, env, deps),
     deadlineMs: c.timeout_ms,
     maxBytes: c.max_response_bytes,
-    inject: () => authHeaders(env, c, deps),
+    inject: () => (cached ??= authHeaders(env, c, deps).catch((e) => {
+      cached = null
+      throw e
+    })),
+    injectHost: endpointHostKey(c, env),
     fetchImpl: deps.fetchImpl,
   }
 }
@@ -547,11 +686,39 @@ export async function connectionAudit(db: D1Database, id: number) {
 export async function saveOAuthCredential(env: ConnectorEnv, id: number, cred: OAuthCredential, hosts: string[]) {
   const ct = await sealJson(env.CONNECTOR_ENC_KEY, AUTH_PURPOSE(id), { ...cred, type: 'oauth' })
   await env.DB.prepare(
-    `UPDATE mcp_connections SET auth_ciphertext = ?, auth_hint = 'OAuth', extra_allowed_hosts = ?, status = 'untested', last_error = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?`,
+    `UPDATE mcp_connections SET auth_ciphertext = ?, auth_hint = ?, extra_allowed_hosts = ?, status = 'untested', last_error = NULL, oauth_strategy = ?,
+       oauth_authorized_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), oauth_token_expires_at = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?`,
   )
-    .bind(ct, hosts.join(' '), id)
+    .bind(ct, `OAuth (${cred.strategy ?? 'unknown'})`, hosts.join(' '), cred.strategy ?? null, cred.expires_at ? new Date(cred.expires_at * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z') : null, id)
     .run()
-  await audit(env.DB, 'connector_oauth_authorized', id, { hosts })
+  await audit(env.DB, 'connector_oauth_authorized', id, { hosts, strategy: cred.strategy, has_refresh_token: !!cred.refresh_token })
+}
+
+// ---------------- OAuth client configuration (encrypted) ----------------
+export interface ClientBlob {
+  client_secret?: string
+  dcr?: { client_information: Record<string, unknown>; redirect_uri: string; issuer: string }
+}
+export async function readClientBlob(env: ConnectorEnv, c: Pick<ConnectionRow, 'id' | 'oauth_client_ciphertext'>): Promise<ClientBlob> {
+  if (!c.oauth_client_ciphertext) return {}
+  try {
+    return await openJson<ClientBlob>(env.CONNECTOR_ENC_KEY, CLIENT_PURPOSE(c.id), c.oauth_client_ciphertext)
+  } catch {
+    return {}
+  }
+}
+export async function writeClientBlob(env: ConnectorEnv, id: number, blob: ClientBlob) {
+  const empty = !blob.client_secret && !blob.dcr
+  const ct = empty ? null : await sealJson(env.CONNECTOR_ENC_KEY, CLIENT_PURPOSE(id), blob)
+  await env.DB.prepare('UPDATE mcp_connections SET oauth_client_ciphertext = ? WHERE id = ?').bind(ct, id).run()
+}
+export async function preregisteredClient(env: ConnectorEnv, c: ConnectionRow): Promise<PreregisteredClient | null> {
+  if (c.oauth_mode !== 'preregistered' || !c.oauth_client_id) return null
+  const blob = await readClientBlob(env, c)
+  return { client_id: c.oauth_client_id, client_secret: blob.client_secret, token_endpoint_auth_method: c.oauth_token_auth_method ?? undefined }
+}
+export async function saveDiagnostics(env: ConnectorEnv, id: number, diag: unknown) {
+  await env.DB.prepare('UPDATE mcp_connections SET oauth_diagnostics = ? WHERE id = ?').bind(JSON.stringify(diag).slice(0, 8000), id).run()
 }
 
 export { policyFor }

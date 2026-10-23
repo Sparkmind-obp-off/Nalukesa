@@ -157,9 +157,13 @@ export interface GuardOptions {
   maxBytes: number
   /** headers injected server-side (credentials); never visible to the browser */
   inject?: () => Promise<Record<string, string>>
+  /**
+   * Credentials are injected ONLY for this host key (host, or 127.0.0.1:port locally).
+   * Prevents cross-host token leakage when the allowlist contains other hosts (e.g. OAuth servers).
+   * Required when `inject` is set.
+   */
+  injectHost?: string
   fetchImpl?: FetchLike
-  /** called for 401/403 so OAuth can react; default: throw NetHttpStatus */
-  onStatus?: (res: Response) => void
 }
 
 function capStream(body: ReadableStream<Uint8Array>, maxBytes: number, deadline: number, ctrl: AbortController): ReadableStream<Uint8Array> {
@@ -206,6 +210,12 @@ function capStream(body: ReadableStream<Uint8Array>, maxBytes: number, deadline:
   })
 }
 
+/** Host key used by allowlists: hostname, or 127.0.0.1:<port> for local dev mocks. */
+export function hostKeyOf(u: URL, allowLocalHttp?: boolean): string {
+  const host = u.hostname.toLowerCase()
+  return allowLocalHttp && u.protocol === 'http:' && host === '127.0.0.1' ? `${host}:${u.port}` : host
+}
+
 export function guardedFetch(o: GuardOptions): FetchLike {
   const f = o.fetchImpl ?? fetch
   const dnsOk = new Set<string>()
@@ -226,7 +236,12 @@ export function guardedFetch(o: GuardOptions): FetchLike {
     if (outer) outer.addEventListener('abort', () => ctrl.abort(), { once: true })
     const headers = new Headers(input instanceof Request ? input.headers : undefined)
     new Headers(init?.headers).forEach((v, k) => headers.set(k, v))
-    if (o.inject) for (const [k, v] of Object.entries(await o.inject())) headers.set(k, v)
+    if (o.inject) {
+      const target = local ? hostKey : host
+      if (!o.injectHost) throw new NetBlocked('Credential injection requires an explicit target host')
+      if (target === o.injectHost.toLowerCase()) for (const [k, v] of Object.entries(await o.inject())) headers.set(k, v)
+      else headers.delete('authorization')
+    }
     headers.set('X-NK-Hop', '1')
     let timer: ReturnType<typeof setTimeout> | undefined
     let res: Response

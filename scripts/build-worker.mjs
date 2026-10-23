@@ -32,6 +32,6 @@ const result = await build({
 })
 const inputs = Object.keys(result.metafile.inputs)
 if (inputs.some((p) => /node_modules\/ajv\//.test(p))) throw new Error('Ajv leaked into the Worker bundle')
-// Only /api/* and /mcp invoke the Worker; everything else is static (SPA fallback by Pages).
-writeFileSync('dist/_routes.json', JSON.stringify({ version: 1, include: ['/api/*', '/mcp'], exclude: [] }, null, 2))
+// Only /api/*, /mcp and /oauth/* invoke the Worker; everything else is static (SPA fallback by Pages).
+writeFileSync('dist/_routes.json', JSON.stringify({ version: 1, include: ['/api/*', '/mcp', '/oauth/*'], exclude: [] }, null, 2))
 console.log('wrote dist/_routes.json')

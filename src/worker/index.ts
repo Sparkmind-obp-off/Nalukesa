@@ -10,7 +10,7 @@ import { handleMcp, TOOL_DEFS, SERVER_INFO } from './mcp/server'
 import { bearer, verifyToken, consumeRate, touchToken, createToken, parseScopes, MCP_SCOPES, RATE_LIMIT_PER_MIN } from './mcp/tokens'
 import { PROVIDERS, checkProvider, providerStatusReport } from './hub/registry'
 import { redact } from './hub/safety'
-import { connectorRoutes, oauthCallback } from './connector/routes'
+import { connectorRoutes, oauthCallback, clientMetadataRoute } from './connector/routes'
 
 export type Bindings = {
   DB: D1Database
@@ -182,6 +182,9 @@ app.all('/mcp', async (c) => {
   h.set('Cache-Control', 'no-store')
   return new Response(res.body, { status: res.status, headers: h })
 })
+
+// ---------- public OAuth Client ID Metadata Document (CIMD) ----------
+app.get('/oauth/client-metadata.json', (c) => clientMetadataRoute(c as never))
 
 // ---------- OAuth callback for outbound connector (owner session required) ----------
 app.get('/api/connector/oauth/callback', async (c, next) => {
