@@ -18,7 +18,7 @@ NALUKESA is **not a marketplace**. No inventory, cart, checkout, payments, or se
 | MCP server | `POST /mcp`: 5 read-only tools, scoped bearer tokens issued in the UI. See [docs/mcp-architecture.md](docs/mcp-architecture.md) |
 | External MCP connector | Generic: register any Streamable-HTTP MCP server (none / bearer / OAuth 2.1 via CIMD, DCR or a pre-registered app), discover tools, approve per tool, invoke. See also [docs/universal-mcp-oauth-gateway.md](docs/universal-mcp-oauth-gateway.md). See [docs/mcp-connector.md](docs/mcp-connector.md). **No real third-party provider has been connected yet.** |
 | Integrations | None connected (Shopee/TikTok: manual entry and CSV only; AI: disabled) |
-| Checks | `npm run check`: typecheck ✓, lint ✓, 156/156 tests ✓, build ✓ · `smoke.sh` 34/34 · `mcp-smoke.sh` 57/57 · `connector-smoke.sh` 129/129 · `gateway-smoke.sh` 102/102 (local D1 + mock MCP/AS) |
+| Checks | `npm run check`: typecheck ✓, lint ✓, 157/157 tests ✓, build ✓ · `smoke.sh` 34/34 · `mcp-smoke.sh` 57/57 · `connector-smoke.sh` 129/129 · `gateway-smoke.sh` 102/102 (local D1 + mock MCP/AS) |
 
 ## Features (implemented and verified)
 - **Overview:** counts and next actions computed only from stored records. It flags stale offers (>30 days), reviews due, experiments without a decision, and published content without performance data. Outcome totals only include snapshots that actually recorded the metric.

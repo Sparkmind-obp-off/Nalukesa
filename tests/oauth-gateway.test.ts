@@ -90,6 +90,14 @@ describe('discovery', () => {
     const e = await discover({ endpoint: new URL(MCP), policy, mode: 'auto', cimdUrl: null, fetchImpl: fakeNet(routes) }).catch((x) => x)
     expect(e.message).toBe('Protected resource found; OAuth authorization-server metadata missing.')
   })
+  it('malformed OIDC metadata is reported as invalid (not missing), naming the bad fields', async () => {
+    // OIDC discovery document without jwks_uri / subject_types_supported / id_token_signing_alg_values_supported
+    const e = await discover({ endpoint: new URL(MCP), policy, mode: 'auto', cimdUrl: null, fetchImpl: fakeNet(baseRoutes(asMeta({ client_id_metadata_document_supported: true }), { oidc: true })) }).catch((x) => x)
+    expect(e).toBeInstanceOf(OAuthStageError)
+    expect(e.stage).toBe('authorization_server')
+    expect(e.message).toMatch(/metadata is invalid/)
+    expect(e.message).toMatch(/jwks_uri/)
+  })
   it('rejects AS without PKCE S256', async () => {
     const e = await discover({ endpoint: new URL(MCP), policy, mode: 'auto', cimdUrl: null, fetchImpl: fakeNet(baseRoutes(asMeta({ code_challenge_methods_supported: ['plain'], registration_endpoint: `${AS}/register` }))) }).catch((x) => x)
     expect(e.message).toMatch(/PKCE S256/)

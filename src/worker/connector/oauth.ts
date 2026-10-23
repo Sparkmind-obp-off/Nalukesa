@@ -191,6 +191,15 @@ export async function discover(input: DiscoveryInput): Promise<DiscoveryResult> 
     asMeta = (await discoverAuthorizationServerMetadata(asUrl, { fetchFn: f })) as unknown as Record<string, unknown> | undefined
   } catch (e) {
     if (e instanceof NetBlocked) fail('authorization_server', `Authorization server metadata rejected: ${e.message}`, 'Metadata is served from a disallowed host.')
+    // Metadata exists but is malformed or fails schema validation (e.g. OIDC document missing required fields).
+    // Report it as invalid instead of "missing" so the owner gets an accurate diagnosis.
+    const msg = e instanceof Error ? e.message : String(e)
+    const fields = Array.from(new Set(Array.from(msg.matchAll(/"path":\s*\[\s*"([a-z_]+)"/g), (m) => m[1]))).slice(0, 6)
+    fail(
+      'authorization_server',
+      `Authorization server metadata is invalid${fields.length ? ` (missing or malformed: ${fields.join(', ')})` : `: ${msg.replace(/\s+/g, ' ').slice(0, 160)}`}.`,
+      'The provider publishes discovery metadata that does not satisfy RFC 8414 / OpenID Connect Discovery. Ask the provider to fix it, or use a bearer token if they offer one.',
+    )
   }
   if (!asMeta) {
     fail(

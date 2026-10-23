@@ -66,7 +66,7 @@ Priorities: **P0** blocks foundation, **P1** core workflow, **P2** persistence/s
 - [x] Registration strategies: CIMD, DCR (cached), pre-registered (none / basic / post) with encrypted secret.
 - [x] Session-bound single-use hashed state, `iss` check, refresh rotation, reauth on failure, endpoint-only token injection.
 - [x] Staged diagnostics + UI (Recommended / pre-registered, stages, Check OAuth, Re-authorize).
-- [x] Unit tests (35) + gateway E2E smoke (102).
+- [x] Unit tests (36) + gateway E2E smoke (102).
 - [ ] Real third-party provider verified end-to-end (blocked: needs owner account/credentials).
 
 ## Generic external MCP connector (v0.4.0, main)
