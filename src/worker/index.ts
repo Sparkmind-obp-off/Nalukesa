@@ -6,6 +6,10 @@ import { ENTITIES, isEntityKey, fieldKeys, type EntityKey } from '../shared/enti
 import { validateEntity, type Row } from '../shared/validate'
 import { parseCsv, toCsv } from '../shared/csv'
 import { SESSION_COOKIE, SESSION_TTL_S, createSession, verifySession, passwordMatches, sha256 } from './auth'
+import { handleMcp, TOOL_DEFS, SERVER_INFO } from './mcp/server'
+import { bearer, verifyToken, consumeRate, touchToken, createToken, parseScopes, MCP_SCOPES, RATE_LIMIT_PER_MIN } from './mcp/tokens'
+import { PROVIDERS, checkProvider, providerStatusReport } from './hub/registry'
+import { redact } from './hub/safety'
 
 export type Bindings = {
   DB: D1Database
@@ -13,6 +17,10 @@ export type Bindings = {
   OWNER_PASSWORD?: string
   SESSION_SECRET?: string
   APP_ENV?: string
+  /** Set to "false" to disable the inbound MCP endpoint entirely */
+  MCP_ENABLED?: string
+  HUB_ALLOWED_HOSTS?: string
+  [key: string]: unknown
 }
 type Env = { Bindings: Bindings }
 
@@ -127,6 +135,47 @@ app.post('/api/auth/login', bodyLimit({ maxSize: 4 * 1024, onError: (c) => fail(
 app.post('/api/auth/logout', (c) => {
   deleteCookie(c, SESSION_COOKIE, { path: '/' })
   return c.json({ ok: true })
+})
+
+// ---------- inbound MCP endpoint (bearer token, separate from owner session) ----------
+const MCP_MAX_BODY = 64 * 1024
+function mcpError(status: 400 | 401 | 403 | 404 | 405 | 413 | 429 | 503, message: string, extra: Record<string, string> = {}) {
+  return new Response(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message }, id: null }), {
+    status,
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...extra },
+  })
+}
+app.all('/mcp', async (c) => {
+  if (c.env.MCP_ENABLED === 'false') return mcpError(503, 'MCP endpoint disabled')
+  // Browsers must not drive this endpoint cross-origin (DNS-rebinding / CSRF defence)
+  const origin = c.req.header('origin')
+  if (origin && origin !== new URL(c.req.url).origin) return mcpError(403, 'Origin not allowed')
+  const tok = bearer(c.req.header('authorization'))
+  const wwwAuth = { 'WWW-Authenticate': 'Bearer realm="nalukesa-mcp"' }
+  if (!tok) return mcpError(401, 'Bearer token required', wwwAuth)
+  const rec = await verifyToken(c.env.DB, tok)
+  if (!rec) {
+    console.log(JSON.stringify({ level: 'warn', msg: 'mcp_auth_failed' }))
+    return mcpError(401, 'Invalid, expired or revoked token', wwwAuth)
+  }
+  if (!(await consumeRate(c.env.DB, rec.id))) return mcpError(429, `Rate limit ${RATE_LIMIT_PER_MIN}/min exceeded`, { 'Retry-After': '60' })
+  if (c.req.method === 'GET' || c.req.method === 'DELETE') return mcpError(405, 'Stateless server: use POST', { Allow: 'POST' })
+  if (c.req.method !== 'POST') return mcpError(405, 'Method not allowed', { Allow: 'POST' })
+  const len = Number(c.req.header('content-length') ?? '0')
+  if (len > MCP_MAX_BODY) return mcpError(413, 'Request too large')
+  const text = await c.req.text()
+  if (text.length > MCP_MAX_BODY) return mcpError(413, 'Request too large')
+  let body: unknown
+  try {
+    body = JSON.parse(text)
+  } catch {
+    return new Response(JSON.stringify({ jsonrpc: '2.0', error: { code: -32700, message: 'Parse error' }, id: null }), { status: 400, headers: { 'Content-Type': 'application/json' } })
+  }
+  c.executionCtx.waitUntil(touchToken(c.env.DB, rec.id))
+  const res = await handleMcp(c.req.raw, c.env as Bindings & { DB: D1Database }, rec, body)
+  const h = new Headers(res.headers)
+  h.set('Cache-Control', 'no-store')
+  return new Response(res.body, { status: res.status, headers: h })
 })
 
 // ---------- auth gate for everything else under /api ----------
@@ -257,6 +306,8 @@ async function analyzeCsv(env: Bindings, entity: EntityKey, text: string) {
   return { header, used, ignored: unknownCols.length ? unknownCols : ignored, missingRequired, reports }
 }
 
+const writeLimit = bodyLimit({ maxSize: 64 * 1024, onError: (c) => fail(c, 413, 'Payload too large') })
+const writeLimitSmall = () => bodyLimit({ maxSize: 4 * 1024, onError: (c) => fail(c, 413, 'Payload too large') })
 const importLimit = bodyLimit({ maxSize: 1024 * 1024, onError: (c) => fail(c, 413, 'CSV larger than 1 MB') })
 
 app.post('/api/import/:entity/validate', importLimit, async (c) => {
@@ -284,8 +335,60 @@ app.post('/api/import/:entity/commit', importLimit, async (c) => {
   return c.json({ imported: stmts.length })
 })
 
+// ---------- MCP token management & hub (owner session only) ----------
+app.get('/api/mcp/info', async (c) => {
+  const r = await c.env.DB.prepare('SELECT id, name, token_prefix, scopes, created_at, expires_at, revoked_at, last_used_at FROM mcp_tokens ORDER BY id DESC').all()
+  return c.json({
+    enabled: c.env.MCP_ENABLED !== 'false',
+    endpoint: new URL('/mcp', c.req.url).toString(),
+    transport: 'streamable-http (stateless, JSON responses)',
+    server: SERVER_INFO,
+    scopes: MCP_SCOPES,
+    tools: TOOL_DEFS,
+    rate_limit_per_min: RATE_LIMIT_PER_MIN,
+    tokens: r.results,
+  })
+})
+app.post('/api/mcp/tokens', writeLimitSmall(), async (c) => {
+  let b: { name?: unknown; scopes?: unknown; ttl_days?: unknown }
+  try {
+    b = await c.req.json()
+  } catch {
+    return fail(c, 400, 'Invalid JSON')
+  }
+  const name = typeof b.name === 'string' ? b.name.trim() : ''
+  if (!name || name.length > 80) return fail(c, 400, 'Validation failed', [{ field: 'name', message: 'Required, max 80 characters' }])
+  const scopes = parseScopes(b.scopes)
+  if (!scopes) return fail(c, 400, 'Validation failed', [{ field: 'scopes', message: `One or more of: ${MCP_SCOPES.join(', ')}` }])
+  const ttl = typeof b.ttl_days === 'number' ? b.ttl_days : 90
+  if (!Number.isInteger(ttl) || ttl < 1 || ttl > 365) return fail(c, 400, 'Validation failed', [{ field: 'ttl_days', message: '1–365' }])
+  const { token, record } = await createToken(c.env.DB, name, scopes, ttl)
+  await audit(c.env, 'mcp_token_create', 'mcp_tokens', (record as { id: number }).id, { scopes, ttl })
+  // token is returned exactly once and never stored in plaintext
+  return c.json({ token, record, warning: 'Copy this token now. It cannot be shown again.' }, 201)
+})
+app.post('/api/mcp/tokens/:id{[0-9]+}/revoke', async (c) => {
+  const id = Number(c.req.param('id'))
+  const r = await c.env.DB.prepare(`UPDATE mcp_tokens SET revoked_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ? AND revoked_at IS NULL`).bind(id).run()
+  if (!r.meta.changes) return fail(c, 404, 'Token not found or already revoked')
+  await audit(c.env, 'mcp_token_revoke', 'mcp_tokens', id)
+  return c.json({ ok: true })
+})
+app.get('/api/hub/providers', async (c) => c.json({ providers: await providerStatusReport(c.env.DB, c.env) }))
+app.post('/api/hub/providers/:id/check', async (c) => {
+  const def = PROVIDERS.find((p) => p.id === c.req.param('id'))
+  if (!def) return fail(c, 404, 'Unknown provider')
+  const r = await checkProvider(def, c.env)
+  const secrets = def.secretEnv ? [c.env[def.secretEnv] as string | undefined] : []
+  const detail = r.error ? redact(r.error, secrets) : null
+  if (r.status !== 'not_configured') {
+    await c.env.DB.prepare('INSERT INTO provider_checks (provider_id, status, latency_ms, detail) VALUES (?,?,?,?)').bind(def.id, r.status, r.latency_ms, detail).run()
+  }
+  await audit(c.env, 'provider_check', 'provider', null, { provider: def.id, status: r.status })
+  return c.json({ provider_id: def.id, status: r.status, observed_at: r.observed_at, latency_ms: r.latency_ms, detail })
+})
+
 // ---------- generic CRUD ----------
-const writeLimit = bodyLimit({ maxSize: 64 * 1024, onError: (c) => fail(c, 413, 'Payload too large') })
 
 app.get('/api/:entity', async (c) => {
   const entity = c.req.param('entity')
