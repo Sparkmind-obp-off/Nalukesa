@@ -7,6 +7,7 @@ BASE=${BASE:-http://localhost:3000}
 PW=${PW:?set PW}
 case "$BASE" in http://localhost*|http://127.0.0.1*) ;; *) echo "Refusing to run against non-local BASE=$BASE"; exit 2;; esac
 JAR=$(mktemp); PASS=0; FAIL=0
+RUN=$(date +%s%N | tail -c 9)   # unique fixture names → deterministic on a reused local DB
 H=(-H 'Content-Type: application/json' -H 'x-nk-client: web')
 M=(-H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream')
 check() { if [ "$2" == "$3" ]; then PASS=$((PASS+1)); echo "PASS  $1"; else FAIL=$((FAIL+1)); echo "FAIL  $1 (expected $2, got $3)"; fi; }
@@ -23,8 +24,8 @@ code -X POST "${H[@]}" -d "{\"password\":\"$PW\"}" "$BASE/api/auth/login" >/dev/
 # ---- fixtures (local DB only) ----
 code -X POST "${H[@]}" -d '{"name":"MCP fixture niche","status":"Researching","confidence":"Low"}' "$BASE/api/niches" >/dev/null; NID=$(idof)
 code -X POST "${H[@]}" -d '{"title":"Fixture listing page","source_type":"Platform listing","url":"https://shopee.co.id/fixture","accessed_at":"2026-10-20","evidence_grade":"B"}' "$BASE/api/evidence_sources" >/dev/null; SID=$(idof)
-code -X POST "${H[@]}" -d "{\"name\":\"MCP fixture serum A\",\"niche_id\":$NID,\"platform\":\"Shopee\",\"listing_url\":\"https://shopee.co.id/fixture-a\",\"status\":\"Researching\"}" "$BASE/api/products" >/dev/null; PA=$(idof)
-code -X POST "${H[@]}" -d "{\"name\":\"MCP fixture serum B\",\"niche_id\":$NID,\"platform\":\"Shopee\",\"listing_url\":\"https://shopee.co.id/fixture-b\",\"status\":\"Researching\"}" "$BASE/api/products" >/dev/null; PB=$(idof)
+code -X POST "${H[@]}" -d "{\"name\":\"MCP fixture $RUN serum A\",\"niche_id\":$NID,\"platform\":\"Shopee\",\"listing_url\":\"https://shopee.co.id/fixture-a\",\"status\":\"Researching\"}" "$BASE/api/products" >/dev/null; PA=$(idof)
+code -X POST "${H[@]}" -d "{\"name\":\"MCP fixture $RUN serum B\",\"niche_id\":$NID,\"platform\":\"Shopee\",\"listing_url\":\"https://shopee.co.id/fixture-b\",\"status\":\"Researching\"}" "$BASE/api/products" >/dev/null; PB=$(idof)
 code -X POST "${H[@]}" -d "{\"product_id\":$PA,\"checked_at\":\"2026-10-20\",\"price_idr\":\"100000\",\"advertised_commission_pct\":\"10\"}" "$BASE/api/offer_snapshots" >/dev/null
 code -X POST "${H[@]}" -d "{\"observed_fact\":\"Listing shows 4.8 rating\",\"source_id\":$SID,\"product_id\":$PA,\"observed_at\":\"2026-10-20\",\"interpretation\":\"Possibly well received\",\"confidence\":\"Low\"}" "$BASE/api/observations" >/dev/null
 code -X POST "${H[@]}" -d "{\"title\":\"Fixture video\",\"product_id\":$PA,\"channel\":\"TikTok\",\"status\":\"Draft\",\"disclosure_status\":\"Not yet\",\"asset_rights\":\"Own original\"}" "$BASE/api/content_items" >/dev/null; CID=$(idof)
@@ -60,8 +61,8 @@ for t in search_products get_product_evidence compare_opportunities get_affiliat
 has  "tools annotated read-only" '"readOnlyHint":true'
 
 # ---- tools ----
-call "$FULL" search_products '{"query":"MCP fixture serum"}' >/dev/null
-has  "search finds fixture" "MCP fixture serum A"
+call "$FULL" search_products '{"query":"MCP fixture '"$RUN"' serum"}' >/dev/null
+has  "search finds fixture" "MCP fixture $RUN serum A"
 has  "search reports total" '"total_matching":2'
 call "$FULL" search_products '{"query":"zz-no-such-product-zz"}' >/dev/null
 has  "empty search returns zero, no invention" '"returned":0'

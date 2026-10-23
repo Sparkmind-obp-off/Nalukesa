@@ -9,5 +9,13 @@ module.exports = {
       instances: 1,
       exec_mode: 'fork',
     },
+    {
+      // local-only deterministic mock MCP provider for connector tests
+      name: 'mock-mcp',
+      script: 'scripts/mock-mcp-server.mjs',
+      env: { MOCK_PORT: '8788' },
+      watch: false,
+      autorestart: false,
+    },
   ],
 }
